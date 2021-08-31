@@ -62,63 +62,6 @@ function Workspace(model::VecModel, optimizer::IpoptAlg, x0::AbstractVector; kwa
     return IpoptWorkspace(model, x0; kwargs...)
 end
 
-# Implement these for sparse matrices
-function fill_indices!(rows, cols, J0::Matrix; offset = 0, row_offset = 0)
-    nconstr, nvars = size(J0)
-    for j in 1:nvars
-        cols[offset + 1 : offset + nconstr] .= j
-        rows[offset + 1 : offset + nconstr] .= row_offset+1:row_offset+nconstr
-        offset += nconstr
-    end
-    return rows, cols
-end
-function fill_indices!(rows, cols, HL::LowerTriangular{<:Real, <:Matrix}; offset = 0, row_offset = 0)
-    nvars = size(HL, 1)
-    for j in 1:nvars
-        cols[offset + 1 : offset + nvars - j + 1] .= j
-        rows[offset + 1 : offset + nvars - j + 1] .= row_offset + j : row_offset + nvars
-        offset += nvars - j + 1
-    end
-    return rows, cols
-end
-function fill_indices!(rows, cols, HL::SparseMatrixCSC; offset = 0, row_offset = 0)
-    for col in 1:length(HL.colptr)-1
-        indices = HL.colptr[col]:HL.colptr[col+1]-1
-        nvars = length(indices)
-        cols[offset + 1 : offset + nvars] .= col
-        rows[offset + 1 : offset + nvars] = row_offset .+ HL.rowval[indices]
-        offset += nvars
-    end
-    return rows, cols
-end
-
-function add_values!(values, J::Matrix; offset = 0)
-    nvars = length(J)
-    values[offset+1:offset+nvars] .+= vec(J)
-    return values
-end
-function add_values!(values, HL::LowerTriangular{<:Real, <:Matrix}; factor = 1, offset = 0)
-    nvars = size(HL, 1)
-    for j in 1:nvars
-        values[offset + 1 : offset + nvars - j + 1] .+= HL[j:nvars, j] .* factor
-        offset += nvars - j + 1
-    end
-    return values
-end
-function add_values!(values, HL::SparseMatrixCSC; factor = 1, offset = 0)
-    nvars = length(HL.nzval)
-    values[offset+1:offset+nvars] .= HL.nzval .* factor
-    return values
-end
-
-nvalues(::Nothing) = 0
-nvalues(J::Matrix) = length(J)
-nvalues(H::LowerTriangular{<:Real, <:Matrix}) = (size(H, 1) + 1) * size(H, 1) ÷ 2
-nvalues(H::SparseMatrixCSC) = length(H.nzval)
-
-_dot(f, x, y) = dot(f(x), y)
-_dot(::Nothing, ::Any, ::Any) = 0.0
-
 function get_ipopt_problem(model::VecModel, x0::AbstractVector, first_order::Bool, linear::Bool)
     eq = if length(model.eq_constraints.fs) == 0
         nothing
