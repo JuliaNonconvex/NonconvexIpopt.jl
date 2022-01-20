@@ -47,13 +47,22 @@ function optimize!(workspace::IpoptWorkspace)
     counter[] = 0
     foreach(keys(options.nt)) do k
         v = options.nt[k]
-        Ipopt.addOption(problem, string(k), v)
+        addOption(problem, string(k), v)
     end
-    solvestat = Ipopt.solveProblem(problem)
+    solvestat = Ipopt.IpoptSolve(problem)
     return IpoptResult(
         copy(problem.x), getobjective(model)(problem.x),
         problem, solvestat, counter[]
     )
+end
+function addOption(prob, name, val::Int)
+    return Ipopt.AddIpoptIntOption(prob, name, val)
+end
+function addOption(prob, name, val::String)
+    return Ipopt.AddIpoptStrOption(prob, name, val)
+end
+function addOption(prob, name, val)
+    return Ipopt.AddIpoptNumOption(prob, name, val)
 end
 
 struct IpoptAlg <: AbstractOptimizer end
@@ -177,7 +186,7 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             return Inf
         end
     end
-    prob = Ipopt.createProblem(
+    prob = Ipopt.CreateIpoptProblem(
         nvars, xlb, xub, ineq_nconstr + eq_nconstr, clb, cub,
         nvalues(ineqJ0) + nvalues(eqJ0), Hnvalues, _obj,
         eval_g, eval_grad_f, eval_jac_g, eval_h,
