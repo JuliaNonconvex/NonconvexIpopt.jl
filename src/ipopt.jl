@@ -50,10 +50,12 @@ function optimize!(workspace::IpoptWorkspace)
         addOption(problem, string(k), v)
     end
     solvestat = Ipopt.IpoptSolve(problem)
-    return IpoptResult(
+    res = IpoptResult(
         copy(problem.x), getobjective(model)(problem.x),
         problem, solvestat, counter[]
     )
+    finalize(problem)
+    return res
 end
 function addOption(prob, name, val::Int)
     return Ipopt.AddIpoptIntOption(prob, name, val)
@@ -139,8 +141,8 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             grad_f .= grad
         end
     end
-    function eval_jac_g(x::Vector{Float64}, mode, rows::Vector{Int32}, cols::Vector{Int32}, values::Vector{Float64})
-        if mode == :Structure
+    function eval_jac_g(x::Vector{Float64}, rows::Vector{Int32}, cols::Vector{Int32}, values::Union{Nothing, Vector{Float64}})
+        if values === nothing
             ineqJ0 === nothing || fill_indices!(rows, cols, ineqJ0)
             eqJ0 === nothing || fill_indices!(rows, cols, eqJ0, offset = Joffset, row_offset = ineq_nconstr)
         else
@@ -166,8 +168,8 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
                 x0,
             ),
         )
-        eval_h = function (x::Vector{Float64}, mode, rows::Vector{Int32}, cols::Vector{Int32}, obj_factor::Float64, lambda::Vector{Float64}, values::Vector{Float64})
-            if mode == :Structure
+        eval_h = function (x::Vector{Float64}, rows::Vector{Int32}, cols::Vector{Int32}, obj_factor::Float64, lambda::Vector{Float64}, values::Union{Nothing, Vector{Float64}})
+            if values === nothing
                 fill_indices!(rows, cols, HL0)
             else
                 HL = LowerTriangular(
