@@ -47,13 +47,22 @@ function optimize!(workspace::IpoptWorkspace)
     counter[] = 0
     foreach(keys(options.nt)) do k
         v = options.nt[k]
-        Ipopt.addOption(problem, string(k), v)
+        addOption(problem, string(k), v)
     end
-    solvestat = Ipopt.solveProblem(problem)
+    solvestat = Ipopt.IpoptSolve(problem)
     return IpoptResult(
         copy(problem.x), getobjective(model)(problem.x),
         problem, solvestat, counter[]
     )
+end
+function addOption(prob, name, val::Int)
+    return Ipopt.AddIpoptIntOption(prob, name, val)
+end
+function addOption(prob, name, val::String)
+    return Ipopt.AddIpoptStrOption(prob, name, val)
+end
+function addOption(prob, name, val)
+    return Ipopt.AddIpoptNumOption(prob, name, val)
 end
 
 struct IpoptAlg <: AbstractOptimizer end
@@ -130,8 +139,8 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             grad_f .= grad
         end
     end
-    function eval_jac_g(x::Vector{Float64}, mode, rows::Vector{Int32}, cols::Vector{Int32}, values::Vector{Float64})
-        if mode == :Structure
+    function eval_jac_g(x::Vector{Float64}, rows::Vector{Int32}, cols::Vector{Int32}, values::Union{Nothing, Vector{Float64}})
+        if values === nothing
             ineqJ0 === nothing || fill_indices!(rows, cols, ineqJ0)
             eqJ0 === nothing || fill_indices!(rows, cols, eqJ0, offset = Joffset, row_offset = ineq_nconstr)
         else
@@ -157,8 +166,8 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
                 x0,
             ),
         )
-        eval_h = function (x::Vector{Float64}, mode, rows::Vector{Int32}, cols::Vector{Int32}, obj_factor::Float64, lambda::Vector{Float64}, values::Vector{Float64})
-            if mode == :Structure
+        eval_h = function (x::Vector{Float64}, rows::Vector{Int32}, cols::Vector{Int32}, obj_factor::Float64, lambda::Vector{Float64}, values::Union{Nothing, Vector{Float64}})
+            if values === nothing
                 fill_indices!(rows, cols, HL0)
             else
                 HL = LowerTriangular(
@@ -177,7 +186,7 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             return Inf
         end
     end
-    prob = Ipopt.createProblem(
+    prob = Ipopt.CreateIpoptProblem(
         nvars, xlb, xub, ineq_nconstr + eq_nconstr, clb, cub,
         nvalues(ineqJ0) + nvalues(eqJ0), Hnvalues, _obj,
         eval_g, eval_grad_f, eval_jac_g, eval_h,
