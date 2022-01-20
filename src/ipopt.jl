@@ -50,12 +50,10 @@ function optimize!(workspace::IpoptWorkspace)
         addOption(problem, string(k), v)
     end
     solvestat = Ipopt.IpoptSolve(problem)
-    res = IpoptResult(
+    return IpoptResult(
         copy(problem.x), getobjective(model)(problem.x),
         problem, solvestat, counter[]
     )
-    finalize(problem)
-    return res
 end
 function addOption(prob, name, val::Int)
     return Ipopt.AddIpoptIntOption(prob, name, val)
