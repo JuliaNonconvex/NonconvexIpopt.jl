@@ -3,8 +3,8 @@ using NonconvexIpopt, LinearAlgebra, Test
 f(x::AbstractVector) = sqrt(x[2])
 g(x::AbstractVector, a, b) = (a*x[1] + b)^3 - x[2]
 
-@testset "First order - $first_order" for first_order in [true, false]
-    options = IpoptOptions(first_order = first_order)
+@testset "First order - $first_order, sparse = $sparse" for first_order in [true, false], sparse in [true, false]
+    options = IpoptOptions(; first_order, sparse)
     @testset "Simple constraints" begin
         m = Model(f)
         addvar!(m, [0.0, 0.0], [10.0, 10.0])
