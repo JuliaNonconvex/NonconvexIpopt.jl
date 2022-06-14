@@ -97,7 +97,7 @@ end
 function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_order, linear)
     nvars = length(x0)
     if ineq_constr !== nothing
-        ineqJ0 = Zygote.jacobian(ineq_constr, x0)[1]
+        ineqJ0 = sparse_jacobian(ineq_constr, x0)
         ineqJ0 = linear ? sparse(ineqJ0) : ineqJ0
         ineq_nconstr, _ = size(ineqJ0)
         Joffset = nvalues(ineqJ0)
@@ -107,7 +107,7 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         Joffset = 0
     end
     if eq_constr !== nothing
-        eqJ0 = Zygote.jacobian(eq_constr, x0)[1]
+        eqJ0 = sparse_jacobian(eq_constr, x0)
         eqJ0 = linear ? sparse(eqJ0) : eqJ0
         eq_nconstr, _ = size(eqJ0)
     else
@@ -146,11 +146,11 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         else
             values .= 0
             if ineq_constr !== nothing
-                ineqJ = linear ? ineqJ0 : Zygote.jacobian(ineq_constr, x)[1]
+                ineqJ = linear ? ineqJ0 : sparse_jacobian(ineq_constr, x)
                 add_values!(values, ineqJ)
             end
             if eq_constr !== nothing
-                eqJ = linear ? eqJ0 : Zygote.jacobian(eq_constr, x)[1]
+                eqJ = linear ? eqJ0 : sparse_jacobian(eq_constr, x)
                 add_values!(values, eqJ, offset = Joffset)
             end
         end
@@ -161,7 +161,7 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         Hnvalues = 0
     else
         HL0 = LowerTriangular(
-            Zygote.hessian(
+            sparse_hessian(
                 lag(1.0, ones(ineq_nconstr + eq_nconstr)),
                 x0,
             ),
@@ -171,7 +171,7 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
                 fill_indices!(rows, cols, HL0)
             else
                 HL = LowerTriangular(
-                    Zygote.hessian(lag(obj_factor, lambda), x),
+                    sparse_hessian(lag(obj_factor, lambda), x),
                 )
                 values .= 0
                 add_values!(values, HL)
