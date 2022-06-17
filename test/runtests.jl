@@ -66,7 +66,7 @@ g(x::AbstractVector, a, b) = (a*x[1] + b)^3 - x[2]
         end
         @testset "Infinite upper and lower bound" begin
             m = Model(f)
-            addvar!(m, [-Inf, -Inf], [Inf, Inf])
+            addvar!(m, [-Inf, 1e-4], [Inf, Inf])
             add_ineq_constraint!(m, x -> g(x, 2, 0))
             add_ineq_constraint!(m, x -> g(x, -1, 1))
 
