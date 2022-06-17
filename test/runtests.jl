@@ -7,7 +7,7 @@ g(x::AbstractVector, a, b) = (a*x[1] + b)^3 - x[2]
     options = IpoptOptions(; first_order, sparse)
     @testset "Simple constraints" begin
         m = Model(f)
-        addvar!(m, [0.0, 0.0], [10.0, 10.0])
+        addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, x -> g(x, 2, 0))
         add_ineq_constraint!(m, x -> g(x, -1, 1))
 
@@ -19,7 +19,7 @@ g(x::AbstractVector, a, b) = (a*x[1] + b)^3 - x[2]
 
     @testset "Equality constraints" begin
         m = Model(f)
-        addvar!(m, [0.0, 0.0], [10.0, 10.0])
+        addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, x -> g(x, 2, 0))
         add_ineq_constraint!(m, x -> g(x, -1, 1))
         add_eq_constraint!(m, x -> sum(x) - 1/3 - 8/27)
@@ -32,7 +32,7 @@ g(x::AbstractVector, a, b) = (a*x[1] + b)^3 - x[2]
 
     @testset "Block constraints" begin
         m = Model(f)
-        addvar!(m, [0.0, 0.0], [10.0, 10.0])
+        addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, FunctionWrapper(x -> [g(x, 2, 0), g(x, -1, 1)], 2))
 
         alg = IpoptAlg()
@@ -44,7 +44,7 @@ g(x::AbstractVector, a, b) = (a*x[1] + b)^3 - x[2]
     @testset "Infinite bounds" begin
         @testset "Infinite upper bound" begin
             m = Model(f)
-            addvar!(m, [0.0, 0.0], [Inf, Inf])
+            addvar!(m, [1e-4, 1e-4], [Inf, Inf])
             add_ineq_constraint!(m, x -> g(x, 2, 0))
             add_ineq_constraint!(m, x -> g(x, -1, 1))
 
@@ -55,7 +55,7 @@ g(x::AbstractVector, a, b) = (a*x[1] + b)^3 - x[2]
         end
         @testset "Infinite lower bound" begin
             m = Model(f)
-            addvar!(m, [-Inf, -Inf], [10, 10])
+            addvar!(m, [-Inf, 1e-4], [10, 10])
             add_ineq_constraint!(m, x -> g(x, 2, 0))
             add_ineq_constraint!(m, x -> g(x, -1, 1))
 
