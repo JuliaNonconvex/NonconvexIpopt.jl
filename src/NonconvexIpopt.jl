@@ -2,7 +2,7 @@ module NonconvexIpopt
 
 export IpoptAlg, IpoptOptions
 
-using Reexport, Parameters, SparseArrays, Zygote
+using Reexport, Parameters, SparseArrays, Zygote, NonconvexUtils
 @reexport using NonconvexCore
 using NonconvexCore: @params, VecModel, AbstractResult
 using NonconvexCore: AbstractOptimizer, CountingFunction
@@ -18,12 +18,13 @@ function IpoptOptions(;
     linear_constraints = false,
     hessian_approximation = first_order ? "limited-memory" : "exact",
     sparse = false,
+    symbolic = false,
     kwargs...,
 )
     kwargs = if linear_constraints
-        (; kwargs..., hessian_approximation, jac_c_constant = "yes", jac_d_constant = "yes", sparse)
+        (; kwargs..., hessian_approximation, jac_c_constant = "yes", jac_d_constant = "yes", sparse, symbolic)
     else
-        (; kwargs..., hessian_approximation, jac_c_constant = "no", jac_d_constant = "no", sparse)
+        (; kwargs..., hessian_approximation, jac_c_constant = "no", jac_d_constant = "no", sparse, symbolic)
     end
     return IpoptOptions(kwargs)
 end
@@ -44,6 +45,7 @@ function IpoptWorkspace(
         options.nt.hessian_approximation == "limited-memory",
         options.nt.jac_c_constant == "yes" && options.nt.jac_d_constant == "yes",
         options.nt.sparse,
+        options.nt.symbolic,
     )
     return IpoptWorkspace(model, problem, copy(x0), options, counter)
 end
@@ -60,7 +62,7 @@ function optimize!(workspace::IpoptWorkspace)
     problem.x .= x0
     counter[] = 0
     foreach(keys(options.nt)) do k
-        if k != :sparse
+        if k != :sparse && k != :symbolic
             v = options.nt[k]
             addOption(problem, string(k), v)
         end
@@ -87,18 +89,37 @@ function Workspace(model::VecModel, optimizer::IpoptAlg, x0::AbstractVector; kwa
     return IpoptWorkspace(model, x0; kwargs...)
 end
 
-function get_ipopt_problem(model::VecModel, x0::AbstractVector, first_order::Bool, linear::Bool, sparse::Bool)
+function get_ipopt_problem(model::VecModel, x0::AbstractVector, first_order::Bool, linear::Bool, sparse::Bool, symbolic::Bool)
     eq = if length(model.eq_constraints.fs) == 0
         nothing
     else
-        model.eq_constraints
+        if symbolic
+            symbolify(model.eq_constraints, x0; sparse, hessian = !first_order, simplify = true)
+        elseif sparse
+            sparsify(model.eq_constraints, x0; hessian = !first_order)
+        else
+            model.eq_constraints
+        end
     end
     ineq = if length(model.ineq_constraints.fs) == 0
         nothing
     else
-        model.ineq_constraints
+        if symbolic
+            symbolify(model.ineq_constraints, x0; sparse, hessian = !first_order, simplify = true)
+        elseif sparse
+            sparsify(model.ineq_constraints, x0; hessian = !first_order)
+        else
+            model.ineq_constraints
+        end
     end
-    obj = CountingFunction(getobjective(model))
+    _obj = if symbolic
+        symbolify(getobjective(model), x0; sparse, hessian = !first_order, simplify = true)
+    elseif sparse
+        sparsify(getobjective(model), x0; hessian = !first_order)
+    else
+        getobjective(model)
+    end
+    obj = CountingFunction(_obj)
     return get_ipopt_problem(
         obj,
         ineq,
@@ -109,9 +130,10 @@ function get_ipopt_problem(model::VecModel, x0::AbstractVector, first_order::Boo
         first_order,
         linear,
         sparse,
+        symbolic,
     ), obj.counter
 end
-function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_order, linear, sparse)
+function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_order, linear, sparse, symbolic)
     nvars = length(x0)
     if ineq_constr !== nothing
         if sparse
@@ -142,6 +164,24 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             _dot(ineq_constr, x, y[1:ineq_nconstr]) + 
             _dot(eq_constr, x, y[ineq_nconstr+1:end])
     end
+    if first_order
+        Hnvalues = 0
+    else
+        L = lag(1.0, ones(ineq_nconstr + eq_nconstr))
+        if symbolic
+            protoH = symbolify(L, x0; sparse, hessian = !first_order, simplify = true).flat_f.h(x0)
+            project_to = NonconvexCore.ChainRulesCore.ProjectTo(protoH)
+        elseif sparse
+            protoH = float.(sparsify(L, x0; hessian = !first_order).flat_f.hess_pattern)
+            project_to = NonconvexCore.ChainRulesCore.ProjectTo(protoH)
+        else
+            protoH = Zygote.hessian(L, x0)
+            project_to = Matrix
+        end
+        HL0 = LowerTriangular(protoH)
+        Hnvalues = nvalues(HL0)
+    end
+
     clb = [fill(-Inf, ineq_nconstr); zeros(eq_nconstr)]
     cub = zeros(ineq_nconstr + eq_nconstr)
 
@@ -189,43 +229,23 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
 
     if first_order
         eval_h = (x...) -> 0.0
-        Hnvalues = 0
     else
-        if sparse
-            H0 = sparse_hessian(
-                lag(1.0, ones(ineq_nconstr + eq_nconstr)),
-                x0,
-            )
-            H0 = H0 + I(length(x0))
-            project_to = NonconvexCore.ChainRulesCore.ProjectTo(H0)
-            HL0 = LowerTriangular(H0)
-        else
-            project_to = identity
-            HL0 = LowerTriangular(
-                Zygote.hessian(
-                    lag(1.0, ones(ineq_nconstr + eq_nconstr)),
-                    x0,
-                ),
-            )
-        end
         eval_h = function (x::Vector{Float64}, rows::Vector{Int32}, cols::Vector{Int32}, obj_factor::Float64, lambda::Vector{Float64}, values::Union{Nothing, Vector{Float64}})
             if values === nothing
                 fill_indices!(rows, cols, HL0)
             else
                 if sparse
-                    HL = LowerTriangular(
-                        project_to(sparse_hessian(lag(obj_factor, lambda), x)),
-                    )
+                    _H = sparse_hessian(lag(obj_factor, lambda), x)
+                    @assert nvalues(LowerTriangular(_H)) <= Hnvalues
+                    HL = LowerTriangular(project_to(_H))
                 else
-                    HL = LowerTriangular(
-                        Zygote.hessian(lag(obj_factor, lambda), x),
-                    )
+                    HL = LowerTriangular(Zygote.hessian(lag(obj_factor, lambda), x))
                 end
+                @assert nvalues(HL) == Hnvalues
                 values .= 0
                 add_values!(values, HL)
             end
         end
-        Hnvalues = nvalues(HL0)
     end
     _obj = function (x)
         try
