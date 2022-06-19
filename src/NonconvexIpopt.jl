@@ -93,24 +93,12 @@ function get_ipopt_problem(model::VecModel, x0::AbstractVector, first_order::Boo
     eq = if length(model.eq_constraints.fs) == 0
         nothing
     else
-        if symbolic
-            symbolify(model.eq_constraints, x0; sparse, hessian = !first_order, simplify = true)
-        elseif sparse
-            sparsify(model.eq_constraints, x0; hessian = !first_order)
-        else
-            model.eq_constraints
-        end
+        model.eq_constraints
     end
     ineq = if length(model.ineq_constraints.fs) == 0
         nothing
     else
-        if symbolic
-            symbolify(model.ineq_constraints, x0; sparse, hessian = !first_order, simplify = true)
-        elseif sparse
-            sparsify(model.ineq_constraints, x0; hessian = !first_order)
-        else
-            model.ineq_constraints
-        end
+        model.ineq_constraints
     end
     _obj = if symbolic
         symbolify(getobjective(model), x0; sparse, hessian = !first_order, simplify = true)
@@ -136,27 +124,53 @@ end
 function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_order, linear, sparse, symbolic)
     nvars = length(x0)
     if ineq_constr !== nothing
-        if sparse
-            ineqJ0 = sparse_jacobian(ineq_constr, x0)
+        if symbolic
+            ineq_constr = symbolify(ineq_constr, x0; sparse, hessian = !first_order, simplify = true)
+            proto_ineqJ = ineq_constr.flat_f.g(x0)
+            ineq_project_to = NonconvexCore.ChainRulesCore.ProjectTo(proto_ineqJ)
+        elseif sparse
+            ineq_constr = sparsify(ineq_constr, x0; hessian = !first_order)
+            proto_ineqJ = float.(ineq_constr.flat_f.jac_pattern)
+            ineq_project_to = NonconvexCore.ChainRulesCore.ProjectTo(proto_ineqJ)
         else
-            ineqJ0 = Zygote.jacobian(ineq_constr, x0)[1]
+            ineq_project_to = identity
+        end
+        if sparse
+            ineqJ0 = ineq_project_to(sparse_jacobian(ineq_constr, x0))
+        else
+            ineqJ0 = ineq_project_to(Zygote.jacobian(ineq_constr, x0)[1])
         end
         ineq_nconstr, _ = size(ineqJ0)
-        Joffset = nvalues(ineqJ0)
+        ineqJ0_nvalues = nvalues(ineqJ0)
+        Joffset = ineqJ0_nvalues
     else
         ineqJ0 = nothing
         ineq_nconstr = 0
+        ineqJ0_nvalues = 0
         Joffset = 0
     end
     if eq_constr !== nothing
-        if sparse
-            eqJ0 = sparse_jacobian(eq_constr, x0)
+        if symbolic
+            eq_constr = symbolify(eq_constr, x0; sparse, hessian = !first_order, simplify = true)
+            proto_eqJ = eq_constr.flat_f.g(x0)
+            eq_project_to = NonconvexCore.ChainRulesCore.ProjectTo(proto_eqJ)
+        elseif sparse
+            eq_constr = sparsify(eq_constr, x0; hessian = !first_order)
+            proto_eqJ = float.(eq_constr.flat_f.jac_pattern)
+            eq_project_to = NonconvexCore.ChainRulesCore.ProjectTo(proto_eqJ)
         else
-            eqJ0 = Zygote.jacobian(eq_constr, x0)[1]
+            eq_project_to = identity
         end
+        if sparse
+            eqJ0 = eq_project_to(sparse_jacobian(eq_constr, x0))
+        else
+            eqJ0 = eq_project_to(Zygote.jacobian(eq_constr, x0)[1])
+        end
+        eqJ0_nvalues = nvalues(eqJ0)
         eq_nconstr, _ = size(eqJ0)
     else
         eqJ0 = nothing
+        eqJ0_nvalues = 0
         eq_nconstr = 0
     end
     lag = (factor, y) -> x -> begin
@@ -170,13 +184,13 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         L = lag(1.0, ones(ineq_nconstr + eq_nconstr))
         if symbolic
             protoH = symbolify(L, x0; sparse, hessian = !first_order, simplify = true).flat_f.h(x0)
-            project_to = NonconvexCore.ChainRulesCore.ProjectTo(protoH)
+            hess_project_to = NonconvexCore.ChainRulesCore.ProjectTo(protoH)
         elseif sparse
             protoH = float.(sparsify(L, x0; hessian = !first_order).flat_f.hess_pattern)
-            project_to = NonconvexCore.ChainRulesCore.ProjectTo(protoH)
+            hess_project_to = NonconvexCore.ChainRulesCore.ProjectTo(protoH)
         else
             protoH = Zygote.hessian(L, x0)
-            project_to = Matrix
+            hess_project_to = Matrix
         end
         HL0 = LowerTriangular(protoH)
         Hnvalues = nvalues(HL0)
@@ -210,18 +224,20 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             values .= 0
             if ineq_constr !== nothing
                 if sparse
-                    ineqJ = linear ? ineqJ0 : sparse_jacobian(ineq_constr, x)
+                    ineqJ = linear ? ineqJ0 : ineq_project_to(sparse_jacobian(ineq_constr, x))
                 else
-                    ineqJ = linear ? ineqJ0 : Zygote.jacobian(ineq_constr, x)[1]
+                    ineqJ = linear ? ineqJ0 : ineq_project_to(Zygote.jacobian(ineq_constr, x)[1])
                 end
+                @assert nvalues(ineqJ) == ineqJ0_nvalues
                 add_values!(values, ineqJ)
             end
             if eq_constr !== nothing
                 if sparse
-                    eqJ = linear ? eqJ0 : sparse_jacobian(eq_constr, x)
+                    eqJ = linear ? eqJ0 : eq_project_to(sparse_jacobian(eq_constr, x))
                 else
-                    eqJ = linear ? eqJ0 : Zygote.jacobian(eq_constr, x)[1]
+                    eqJ = linear ? eqJ0 : eq_project_to(Zygote.jacobian(eq_constr, x)[1])
                 end
+                @assert nvalues(eqJ) == eqJ0_nvalues
                 add_values!(values, eqJ, offset = Joffset)
             end
         end
@@ -237,7 +253,7 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
                 if sparse
                     _H = sparse_hessian(lag(obj_factor, lambda), x)
                     @assert nvalues(LowerTriangular(_H)) <= Hnvalues
-                    HL = LowerTriangular(project_to(_H))
+                    HL = LowerTriangular(hess_project_to(_H))
                 else
                     HL = LowerTriangular(Zygote.hessian(lag(obj_factor, lambda), x))
                 end
