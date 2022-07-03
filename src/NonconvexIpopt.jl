@@ -126,20 +126,17 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
     if ineq_constr !== nothing
         if symbolic
             ineq_constr = symbolify(ineq_constr, x0; sparse, hessian = !first_order, simplify = true)
-            proto_ineqJ = ineq_constr.flat_f.g(x0)
-            ineq_project_to = NonconvexCore.ChainRulesCore.ProjectTo(proto_ineqJ)
+            ineq_constr_g = ineq_constr.flat_f.g
+            ineq_constr_h = ineq_constr.flat_f.h
         elseif sparse
             ineq_constr = sparsify(ineq_constr, x0; hessian = !first_order)
-            proto_ineqJ = float.(ineq_constr.flat_f.jac_pattern)
-            ineq_project_to = NonconvexCore.ChainRulesCore.ProjectTo(proto_ineqJ)
+            ineq_constr_g = ineq_constr.flat_f.J
+            ineq_constr_h = ineq_constr.flat_f.H
         else
-            ineq_project_to = identity
+            ineq_constr_g = x -> Zygote.jacobian(ineq_constr, x)[1]
+            ineq_constr_h = nothing
         end
-        if sparse
-            ineqJ0 = ineq_project_to(sparse_jacobian(ineq_constr, x0))
-        else
-            ineqJ0 = ineq_project_to(Zygote.jacobian(ineq_constr, x0)[1])
-        end
+        ineqJ0 = ineq_constr_g(x0)
         ineq_nconstr, _ = size(ineqJ0)
         ineqJ0_nvalues = nvalues(ineqJ0)
         Joffset = ineqJ0_nvalues
@@ -148,50 +145,57 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         ineq_nconstr = 0
         ineqJ0_nvalues = 0
         Joffset = 0
+        ineq_constr_g = nothing
+        ineq_constr_h = nothing
     end
     if eq_constr !== nothing
         if symbolic
             eq_constr = symbolify(eq_constr, x0; sparse, hessian = !first_order, simplify = true)
-            proto_eqJ = eq_constr.flat_f.g(x0)
-            eq_project_to = NonconvexCore.ChainRulesCore.ProjectTo(proto_eqJ)
+            eq_constr_g = eq_constr.flat_f.g
+            eq_constr_h = eq_constr.flat_f.h
         elseif sparse
             eq_constr = sparsify(eq_constr, x0; hessian = !first_order)
-            proto_eqJ = float.(eq_constr.flat_f.jac_pattern)
-            eq_project_to = NonconvexCore.ChainRulesCore.ProjectTo(proto_eqJ)
+            eq_constr_g = eq_constr.flat_f.J
+            eq_constr_h = eq_constr.flat_f.H
         else
-            eq_project_to = identity
+            eq_constr_g = x -> Zygote.jacobian(eq_constr, x)[1]
+            eq_constr_h = nothing
         end
-        if sparse
-            eqJ0 = eq_project_to(sparse_jacobian(eq_constr, x0))
-        else
-            eqJ0 = eq_project_to(Zygote.jacobian(eq_constr, x0)[1])
-        end
+        eqJ0 = eq_constr_g(x0)
         eqJ0_nvalues = nvalues(eqJ0)
         eq_nconstr, _ = size(eqJ0)
     else
         eqJ0 = nothing
         eqJ0_nvalues = 0
         eq_nconstr = 0
+        eq_constr_g = nothing
+        eq_constr_h = nothing
     end
-    lag = (factor, y) -> x -> begin
-        return factor * obj(x) + 
-            _dot(ineq_constr, x, y[1:ineq_nconstr]) + 
-            _dot(eq_constr, x, y[ineq_nconstr+1:end])
+    if sparse || symbolic
+        lag = (factor, y) -> SparseLagrangian(
+            obj,
+            x -> Zygote.gradient(obj, x)[1],
+            x -> Zygote.hessian(obj, x),
+            factor,
+            ineq_constr,
+            ineq_constr_g,
+            ineq_constr_h,
+            eq_constr,
+            eq_constr_g,
+            eq_constr_h,
+            y[1:ineq_nconstr],
+            y[ineq_nconstr+1:end],
+        )
+    else
+        lag = (factor, y) -> x -> begin
+            return factor * obj(x) + _dot(ineq_constr, x, y[1:ineq_nconstr]) + _dot(eq_constr, x, y[ineq_nconstr+1:end])
+        end
     end
     if first_order
         Hnvalues = 0
     else
         L = lag(1.0, ones(ineq_nconstr + eq_nconstr))
-        if symbolic
-            protoH = symbolify(L, x0; sparse, hessian = !first_order, simplify = true).flat_f.h(x0)
-            hess_project_to = NonconvexCore.ChainRulesCore.ProjectTo(protoH)
-        elseif sparse
-            protoH = float.(sparsify(L, x0; hessian = !first_order).flat_f.hess_pattern)
-            hess_project_to = NonconvexCore.ChainRulesCore.ProjectTo(protoH)
-        else
-            protoH = Zygote.hessian(L, x0)
-            hess_project_to = Matrix
-        end
+        protoH = nc_hessian(L, x0)
         HL0 = LowerTriangular(protoH)
         Hnvalues = nvalues(HL0)
     end
@@ -223,20 +227,12 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         else
             values .= 0
             if ineq_constr !== nothing
-                if sparse
-                    ineqJ = linear ? ineqJ0 : ineq_project_to(sparse_jacobian(ineq_constr, x))
-                else
-                    ineqJ = linear ? ineqJ0 : ineq_project_to(Zygote.jacobian(ineq_constr, x)[1])
-                end
+                ineqJ = linear ? ineqJ0 : ineq_constr_g(x)
                 @assert nvalues(ineqJ) == ineqJ0_nvalues
                 add_values!(values, ineqJ)
             end
             if eq_constr !== nothing
-                if sparse
-                    eqJ = linear ? eqJ0 : eq_project_to(sparse_jacobian(eq_constr, x))
-                else
-                    eqJ = linear ? eqJ0 : eq_project_to(Zygote.jacobian(eq_constr, x)[1])
-                end
+                eqJ = linear ? eqJ0 : eq_constr_g(x)
                 @assert nvalues(eqJ) == eqJ0_nvalues
                 add_values!(values, eqJ, offset = Joffset)
             end
@@ -250,13 +246,8 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             if values === nothing
                 fill_indices!(rows, cols, HL0)
             else
-                if sparse
-                    _H = sparse_hessian(lag(obj_factor, lambda), x)
-                    @assert nvalues(LowerTriangular(_H)) <= Hnvalues
-                    HL = LowerTriangular(hess_project_to(_H))
-                else
-                    HL = LowerTriangular(Zygote.hessian(lag(obj_factor, lambda), x))
-                end
+                _H = nc_hessian(lag(obj_factor, lambda), x)
+                HL = LowerTriangular(_H)
                 @assert nvalues(HL) == Hnvalues
                 values .= 0
                 add_values!(values, HL)
@@ -279,7 +270,35 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
     return prob
 end
 
-_dot(f, x, y) = dot(f(x), y)
+_dot(f, x, y) = f(x)' * y
 _dot(::Nothing, ::Any, ::Any) = 0.0
+_reshape_dot(::Nothing, x, ::Any) = zeros(length(x), length(x))
+_reshape_dot(f, x, y) = reshape(reshape(f(x), length(y), length(x)^2)' * y, length(x), length(x))
+
+struct SparseLagrangian{F0, J0, H0, F, G1, J1, H1, G2, J2, H2, L1, L2}
+    f::F0
+    fJ::J0
+    fH::H0
+    factor::F
+    ineq::G1
+    ineqJ::J1
+    ineqH::H1
+    eq::G2
+    eqJ::J2
+    eqH::H2
+    λ1::L1
+    λ2::L2
+end
+function (l::SparseLagrangian)(x)
+    return l.factor * l.f(x) + _dot(l.ineq, x, l.λ1) + _dot(l.eq, x, l.λ2)
+end
+function nc_gradient(l::SparseLagrangian, x)
+    return l.factor * l.fJ(x) + _dot(l.ineqJ, x, l.λ1) + _dot(l.eqJ, x, l.λ2)
+end
+nc_gradient(l, x) = Zygote.gradient(l, x)[1]
+function nc_hessian(l::SparseLagrangian, x)
+    return l.factor * l.fH(x) + _reshape_dot(l.ineqH, x, l.λ1) + _reshape_dot(l.eqH, x, l.λ2)
+end
+nc_hessian(l, x) = Zygote.hessian(l, x)
 
 end
