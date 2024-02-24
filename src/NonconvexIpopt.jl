@@ -254,16 +254,9 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             end
         end
     end
-    _obj = function (x)
-        try
-            return obj(x)
-        catch
-            return Inf
-        end
-    end
     prob = Ipopt.CreateIpoptProblem(
         nvars, xlb, xub, ineq_nconstr + eq_nconstr, clb, cub,
-        nvalues(ineqJ0) + nvalues(eqJ0), Hnvalues, _obj,
+        nvalues(ineqJ0) + nvalues(eqJ0), Hnvalues, obj,
         eval_g, eval_grad_f, eval_jac_g, eval_h,
     )
     prob.x = x0
