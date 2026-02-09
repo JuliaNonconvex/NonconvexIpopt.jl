@@ -102,8 +102,8 @@ function get_ipopt_problem(model::VecModel, x0::AbstractVector, first_order::Boo
     end
     _obj = if symbolic
         symbolify(getobjective(model), x0; sparse, hessian = !first_order, simplify = true)
-    elseif sparse
-        sparsify(getobjective(model), x0; hessian = !first_order)
+    # elseif sparse
+    #     sparsify(getobjective(model), x0; hessian = !first_order)
     else
         getobjective(model)
     end
@@ -128,10 +128,10 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             ineq_constr = symbolify(ineq_constr, x0; sparse, hessian = !first_order, simplify = true)
             ineq_constr_g = ineq_constr.flat_f.g
             ineq_constr_h = ineq_constr.flat_f.h
-        elseif sparse
-            ineq_constr = sparsify(ineq_constr, x0; hessian = !first_order)
-            ineq_constr_g = ineq_constr.flat_f.J
-            ineq_constr_h = ineq_constr.flat_f.H
+        # elseif sparse
+        #     ineq_constr = sparsify(ineq_constr, x0; hessian = !first_order)
+        #     ineq_constr_g = ineq_constr.flat_f.J
+        #     ineq_constr_h = ineq_constr.flat_f.H
         else
             ineq_constr_g = x -> Zygote.jacobian(ineq_constr, x)[1]
             ineq_constr_h = nothing
@@ -153,10 +153,10 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             eq_constr = symbolify(eq_constr, x0; sparse, hessian = !first_order, simplify = true)
             eq_constr_g = eq_constr.flat_f.g
             eq_constr_h = eq_constr.flat_f.h
-        elseif sparse
-            eq_constr = sparsify(eq_constr, x0; hessian = !first_order)
-            eq_constr_g = eq_constr.flat_f.J
-            eq_constr_h = eq_constr.flat_f.H
+        # elseif sparse
+        #     eq_constr = sparsify(eq_constr, x0; hessian = !first_order)
+        #     eq_constr_g = eq_constr.flat_f.J
+        #     eq_constr_h = eq_constr.flat_f.H
         else
             eq_constr_g = x -> Zygote.jacobian(eq_constr, x)[1]
             eq_constr_h = nothing
