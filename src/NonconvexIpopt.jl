@@ -7,7 +7,7 @@ using Reexport, Parameters, SparseArrays, Zygote, NonconvexUtils
 using NonconvexCore: @params, VecModel, AbstractResult
 using NonconvexCore: AbstractOptimizer, CountingFunction
 using NonconvexCore: nvalues, fill_indices!, add_values!
-import NonconvexCore: optimize!, sparse_jacobian, sparse_hessian
+import NonconvexCore: optimize!, sparse_jacobian, sparse_hessian, Workspace
 using Ipopt
 
 @params struct IpoptOptions
