@@ -1,6 +1,6 @@
 name = "NonconvexIpopt"
 uuid = "bf347577-a06d-49ad-a669-8c0e005493b8"
-version = "0.5.1"
+version = "0.6.0"
 authors = ["Mohamed Tarek <mohdibntarek@gmail.com> and contributors"]
 
 [deps]
@@ -15,13 +15,13 @@ Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
 Ipopt = "0.9, 1"
-LinearAlgebra = "1.12.0"
+LinearAlgebra = "1"
 NonconvexCore = "1.5"
-NonconvexUtils = "0.5"
+NonconvexUtils = "1"
 Parameters = "0.12, 0.13"
 Reexport = "1"
-SparseArrays = "1.12.0"
-Zygote = "0.6"
+SparseArrays = "1"
+Zygote = "0.6, 0.7"
 julia = "1"
 
 [extras]
