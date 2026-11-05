@@ -16,16 +16,31 @@ end
 function IpoptOptions(;
     first_order = true,
     linear_constraints = false,
-    hessian_approximation = first_order ? "limited-memory" : "exact",
+    hessian_approximation = nothing,
     sparse = false,
     symbolic = false,
     kwargs...,
 )
-    kwargs = if linear_constraints
-        (; kwargs..., hessian_approximation, jac_c_constant = "yes", jac_d_constant = "yes", sparse, symbolic)
-    else
-        (; kwargs..., hessian_approximation, jac_c_constant = "no", jac_d_constant = "no", sparse, symbolic)
-    end
+    sparse && !symbolic && error(
+        "The `sparse` option requires `symbolic = true`; the sparse-without-symbolic path is not implemented.",
+    )
+    _hessian_approximation =
+        hessian_approximation === nothing ? (first_order ? "limited-memory" : "exact") :
+        hessian_approximation
+    jac_c_constant =
+        haskey(kwargs, :jac_c_constant) ? kwargs[:jac_c_constant] :
+        (linear_constraints ? "yes" : "no")
+    jac_d_constant =
+        haskey(kwargs, :jac_d_constant) ? kwargs[:jac_d_constant] :
+        (linear_constraints ? "yes" : "no")
+    kwargs = (;
+        kwargs...,
+        hessian_approximation = _hessian_approximation,
+        jac_c_constant = jac_c_constant,
+        jac_d_constant = jac_d_constant,
+        sparse,
+        symbolic,
+    )
     return IpoptOptions(kwargs)
 end
 
@@ -188,7 +203,9 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         )
     else
         lag = (factor, y) -> x -> begin
-            return factor * obj(x) + _dot(ineq_constr, x, y[1:ineq_nconstr]) + _dot(eq_constr, x, y[ineq_nconstr+1:end])
+            return factor * obj(x) +
+                   _dot(ineq_constr, x, @view(y[1:ineq_nconstr])) +
+                   _dot(eq_constr, x, @view(y[ineq_nconstr+1:end]))
         end
     end
     if first_order

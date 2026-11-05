@@ -80,3 +80,25 @@ g(x::AbstractVector, a, b) = (a*x[1] + b)^3 - x[2]
         end
     end
 end
+
+@testset "IpoptOptions keyword handling" begin
+    # Regression tests: these combinations used to silently override user
+    # settings.
+    o = IpoptOptions(first_order = true, hessian_approximation = "exact")
+    @test o.nt.hessian_approximation == "exact"
+    o = IpoptOptions(first_order = false, hessian_approximation = "limited-memory")
+    @test o.nt.hessian_approximation == "limited-memory"
+    o = IpoptOptions(linear_constraints = true, jac_c_constant = "no")
+    @test o.nt.jac_c_constant == "no"
+    o = IpoptOptions(linear_constraints = false, jac_c_constant = "yes")
+    @test o.nt.jac_c_constant == "yes"
+    # Defaults are still derived from first_order / linear_constraints.
+    o = IpoptOptions(first_order = true)
+    @test o.nt.hessian_approximation == "limited-memory"
+    o = IpoptOptions(first_order = false)
+    @test o.nt.hessian_approximation == "exact"
+    o = IpoptOptions(linear_constraints = true)
+    @test o.nt.jac_c_constant == "yes"
+    # sparse without symbolic is not implemented and must fail loudly.
+    @test_throws ErrorException IpoptOptions(sparse = true, symbolic = false)
+end
