@@ -102,3 +102,25 @@ end
     # sparse without symbolic is not implemented and must fail loudly.
     @test_throws ErrorException IpoptOptions(sparse = true, symbolic = false)
 end
+
+@testset "Iteration callback" begin
+    m = Model(f)
+    addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+    add_ineq_constraint!(m, x -> g(x, 2, 0))
+    add_ineq_constraint!(m, x -> g(x, -1, 1))
+
+    iterates = Any[]
+    r = NonconvexIpopt.optimize(
+        m,
+        IpoptAlg(),
+        [1.234, 2.345],
+        options = IpoptOptions(),
+        callback = s -> push!(iterates, (x = copy(s.x), f = s.f, infeas = s.convstate.infeas)),
+    )
+    @test length(iterates) > 0
+    @test all(s -> isfinite(s.f), iterates)
+    # The callback sees the sequence of Ipopt iterates; the final iterate
+    # is the accepted solution.
+    @test abs(iterates[end].f - r.minimum) < 1e-4
+    @test abs(r.minimum - sqrt(8 / 27)) < 1e-6
+end
