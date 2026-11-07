@@ -7,6 +7,8 @@ using Reexport, Parameters, SparseArrays, Zygote, NonconvexUtils
 using NonconvexCore: @params, VecModel, AbstractResult
 using NonconvexCore: AbstractOptimizer, CountingFunction
 using NonconvexCore: nvalues, fill_indices!, add_values!
+using NonconvexCore: Solution, ConvergenceState, NoCallback
+using NonconvexCore: getnineqconstraints, getneqconstraints
 import NonconvexCore: optimize!, sparse_jacobian, sparse_hessian, Workspace
 using Ipopt
 
@@ -50,10 +52,13 @@ end
     x0::AbstractVector
     options::IpoptOptions
     counter::Base.RefValue{Int}
+    callback::Function
 end
 function IpoptWorkspace(
     model::VecModel, x0::AbstractVector = getinit(model);
-    options = IpoptOptions(), kwargs...,
+    options = IpoptOptions(),
+    callback::Function = NoCallback(),
+    kwargs...,
 )
     problem, counter = get_ipopt_problem(
         model, copy(x0),
@@ -62,7 +67,7 @@ function IpoptWorkspace(
         options.nt.sparse,
         options.nt.symbolic,
     )
-    return IpoptWorkspace(model, problem, copy(x0), options, counter)
+    return IpoptWorkspace(model, problem, copy(x0), options, counter, callback)
 end
 @params struct IpoptResult <: AbstractResult
     minimizer
@@ -73,7 +78,7 @@ end
 end
 
 function optimize!(workspace::IpoptWorkspace)
-    @unpack model, problem, options, counter, x0 = workspace
+    @unpack model, problem, options, counter, x0, callback = workspace
     problem.x .= x0
     counter[] = 0
     foreach(keys(options.nt)) do k
@@ -82,10 +87,69 @@ function optimize!(workspace::IpoptWorkspace)
             addOption(problem, string(k), v)
         end
     end
+    if callback !== NoCallback()
+        setup_intermediate_callback!(workspace)
+    end
     solvestat = Ipopt.IpoptSolve(problem)
     return IpoptResult(
         copy(problem.x), getobjective(model)(problem.x),
         problem, solvestat, counter[]
+    )
+end
+
+"""
+    setup_intermediate_callback!(workspace)
+
+Registers Ipopt's intermediate callback so the Nonconvex `callback` is invoked
+once per Ipopt iteration with a `Solution` carrying the current iterate, the
+constraint values, the constraint multipliers, the objective value, and the
+primal/dual infeasibility in the convergence state.
+"""
+function setup_intermediate_callback!(workspace::IpoptWorkspace)
+    @unpack model, problem, x0, callback = workspace
+    n = length(x0)
+    m = getnineqconstraints(model) + getneqconstraints(model)
+    x = zeros(n)
+    z_L = zeros(n)
+    z_U = zeros(n)
+    g = zeros(m)
+    λ = zeros(m)
+    Ipopt.SetIntermediateCallback(problem, (
+        alg_mod,
+        iter_count,
+        obj_value,
+        inf_pr,
+        inf_du,
+        mu,
+        d_norm,
+        regularization_size,
+        alpha_du,
+        alpha_pr,
+        ls_trials,
+    ) -> begin
+        Ipopt.GetIpoptCurrentIterate(problem, false, n, x, z_L, z_U, m, g, λ)
+        callback(ipopt_solution(x, g, λ, obj_value, inf_pr, inf_du))
+        return true
+    end)
+end
+
+function ipopt_solution(x::AbstractVector, g::AbstractVector, λ::AbstractVector, obj_value::Real, inf_pr::Real, inf_du::Real)
+    n = length(x)
+    m = length(g)
+    convstate = ConvergenceState{Float64}()
+    convstate.kkt_residual = inf_du
+    convstate.ipopt_residual = inf_du
+    convstate.infeas = inf_pr
+    return Solution(
+        copy(x),
+        copy(x),
+        λ,
+        obj_value,
+        obj_value,
+        zeros(n),
+        g,
+        zeros(m, n),
+        convstate,
     )
 end
 function addOption(prob, name, val::Int)
