@@ -124,3 +124,13 @@ end
     @test abs(iterates[end].f - r.minimum) < 1e-4
     @test abs(r.minimum - sqrt(8 / 27)) < 1e-6
 end
+
+@testset "solver capabilities" begin
+    caps = solver_capabilities(IpoptAlg())
+    @test caps isa ConstraintCapabilities
+    @test caps.eq === true
+    @test caps.ineq === true
+    @test caps.sd === false
+    @test caps.box === true
+    @test caps.integer === false
+end

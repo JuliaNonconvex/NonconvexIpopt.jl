@@ -164,6 +164,14 @@ end
 
 struct IpoptAlg <: AbstractOptimizer end
 
+NonconvexCore.solver_capabilities(::IpoptAlg) = ConstraintCapabilities(
+    eq = true,
+    ineq = true,
+    sd = false,
+    box = true,
+    integer = false,
+)
+
 function Workspace(model::VecModel, optimizer::IpoptAlg, x0::AbstractVector; kwargs...,)
     return IpoptWorkspace(model, x0; kwargs...)
 end
