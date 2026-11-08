@@ -4,9 +4,6 @@ f(x::AbstractVector) = sqrt(x[2])
 g(x::AbstractVector, a, b) = (a*x[1] + b)^3 - x[2]
 
 @testset "First order - $first_order, sparse = $sparse, symbolic = $symbolic" for first_order in [true, false], sparse in [true, false], symbolic in [true, false]
-    if !symbolic && sparse
-        continue
-    end
     options = IpoptOptions(; first_order, sparse, symbolic)
     @testset "Simple constraints" begin
         m = Model(f)
@@ -99,8 +96,10 @@ end
     @test o.nt.hessian_approximation == "exact"
     o = IpoptOptions(linear_constraints = true)
     @test o.nt.jac_c_constant == "yes"
-    # sparse without symbolic is not implemented and must fail loudly.
-    @test_throws ErrorException IpoptOptions(sparse = true, symbolic = false)
+    # sparse without symbolic is supported and detects the sparse structures
+    # with SparseConnectivityTracer.
+    o = IpoptOptions(sparse = true, symbolic = false)
+    @test o.nt.sparse && !o.nt.symbolic
 end
 
 @testset "Iteration callback" begin
