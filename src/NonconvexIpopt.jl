@@ -208,39 +208,25 @@ function get_ipopt_problem(model::VecModel, x0::AbstractVector, first_order::Boo
         symbolic,
     ), obj.counter
 end
-# The JuMP-sourced functions of a converted model, if all constraints and the
-# objective are such; otherwise `nothing`.
-function _jump_symbolic_pieces(obj, ineq_constr, eq_constr)
+# The single Nonlinear evaluator of a JuMP-converted model, if the objective
+# and every constraint belong to it; otherwise `nothing`.
+function _jump_evaluator(obj, ineq_constr, eq_constr)
     objraw = obj isa CountingFunction ? obj.f : obj
     objraw = objraw isa NonconvexCore.Objective ? NonconvexCore.getfunction(objraw) : objraw
     objraw = objraw isa NonconvexCore.FlattenedFunction ? NonconvexCore.getrawfunction(objraw) : objraw
-    objraw = objraw isa FunctionWrapper ? NonconvexCore.getfunction(objraw) : objraw
-    objraw isa NonconvexCore.JumpConvertedFunction || return nothing
-    objj = NonconvexCore.jump_symbolic_function(objraw)
+    objraw isa NonconvexCore.JumpModelObjective || return nothing
+    m = objraw.m
     cs = (
         (ineq_constr === nothing ? () : ineq_constr.fs)...,
         (eq_constr === nothing ? () : eq_constr.fs)...,
     )
-    # One entry per constraint *row* (intervals contribute two rows), aligned
-    # with the Lagrangian multipliers of `eval_g`.
-    jumps = Tuple{Any,Float64}[]
     for c in cs
         raw = c.f isa NonconvexCore.FlattenedFunction ? NonconvexCore.getrawfunction(c.f) : c.f
         raw = raw isa FunctionWrapper ? NonconvexCore.getfunction(raw) : raw
-        if raw isa NonconvexCore.JumpConvertedFunction
-            push!(jumps, (NonconvexCore.jump_symbolic_function(raw), 1.0))
-        elseif raw isa NonconvexCore.NegatedJumpConvertedFunction
-            push!(jumps, (NonconvexCore.jump_symbolic_function(raw), -1.0))
-        elseif raw isa NonconvexCore.ShiftedJumpConvertedFunction
-            push!(jumps, (NonconvexCore.jump_symbolic_function(raw), 1.0))
-        elseif raw isa NonconvexCore.IntervalJumpConvertedFunction
-            push!(jumps, (NonconvexCore.jump_symbolic_function(raw), -1.0))
-            push!(jumps, (NonconvexCore.jump_symbolic_function(raw), 1.0))
-        else
-            return nothing
-        end
+        (raw isa NonconvexCore.JumpModelIneq || raw isa NonconvexCore.JumpModelEq) || return nothing
+        raw.m === m || return nothing
     end
-    return objj, jumps
+    return m
 end
 
 function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_order, linear, sparse, symbolic)
@@ -274,6 +260,9 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
     ineq_nconstr = sum(c -> c[3], ineq_cs; init = 0)
     eq_nconstr = sum(c -> c[3], eq_cs; init = 0)
     nconstr = ineq_nconstr + eq_nconstr
+    # A JuMP-converted model provides values, Jacobian and Lagrangian
+    # Hessian directly from its single Nonlinear evaluator.
+    jump = symbolic ? nothing : _jump_evaluator(obj, ineq_constr, eq_constr)
     if symbolic
         if ineq_constr !== nothing
             ineq_constr = symbolify(ineq_constr, x0; sparse, hessian = !first_order, simplify = true)
@@ -305,19 +294,36 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         eqJ0_nvalues = nvalues(eqJ0)
         Joffset = ineqJ0_nvalues
     end
-    njacvals = ineqJ0_nvalues + eqJ0_nvalues
+    if jump !== nothing
+        ineqJ0 = nothing
+        eqJ0 = nothing
+        Joffset = 0
+        njacvals = length(NonconvexCore.jump_jacobian_structure(jump)[1])
+    else
+        njacvals = ineqJ0_nvalues + eqJ0_nvalues
+    end
     # The Jacobian structure is fixed from the initial point.
     jac_rows = zeros(Int, njacvals)
     jac_cols = zeros(Int, njacvals)
-    ineqJ0 === nothing || fill_indices!(jac_rows, jac_cols, ineqJ0)
-    eqJ0 === nothing ||
-        fill_indices!(jac_rows, jac_cols, eqJ0, offset = Joffset, row_offset = ineq_nconstr)
-    jac0 = zeros(njacvals)
-    for k = 1:Joffset
-        jac0[k] = ineqJ0[jac_rows[k], jac_cols[k]]
+    if jump !== nothing
+        jac_rows0, jac_cols0 = NonconvexCore.jump_jacobian_structure(jump)
+        jac_rows .= jac_rows0
+        jac_cols .= jac_cols0
+    else
+        ineqJ0 === nothing || fill_indices!(jac_rows, jac_cols, ineqJ0)
+        eqJ0 === nothing ||
+            fill_indices!(jac_rows, jac_cols, eqJ0, offset = Joffset, row_offset = ineq_nconstr)
     end
-    for k = (Joffset+1):njacvals
-        jac0[k] = eqJ0[jac_rows[k]-ineq_nconstr, jac_cols[k]]
+    jac0 = zeros(njacvals)
+    if jump !== nothing
+        NonconvexCore.jump_jacobian!(jump, jac0, x0)
+    else
+        for k = 1:Joffset
+            jac0[k] = ineqJ0[jac_rows[k], jac_cols[k]]
+        end
+        for k = (Joffset+1):njacvals
+            jac0[k] = eqJ0[jac_rows[k]-ineq_nconstr, jac_cols[k]]
+        end
     end
     # For the non-symbolic second-order path the Lagrangian is a single
     # closure over mutable multipliers: the sparse Hessian preparation
@@ -347,28 +353,13 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
                    _dot(eq_constr, x, @view(lag_refs.lambda[][ineq_nconstr+1:end]))
         end
     end
-    # For JuMP-converted models, every expression's evaluator provides its
-    # exact Hessian directly; the structure is the union of the expression
-    # graph structures and the values are assembled per term.
-    jump_pieces = symbolic ? nothing : _jump_symbolic_pieces(obj, ineq_constr, eq_constr)
     if first_order
         Hnvalues = 0
-    elseif jump_pieces !== nothing
-        objj, jumps = jump_pieces
-        n = nvars
-        structure = Set{Tuple{Int,Int}}()
-        for (i, j) in NonconvexCore.jump_symbolic_hessian_sparsity(objj, n)
-            push!(structure, i <= j ? (i, j) : (j, i))
-        end
-        for (jf, _) in jumps
-            for (i, j) in NonconvexCore.jump_symbolic_hessian_sparsity(jf, n)
-                push!(structure, i <= j ? (i, j) : (j, i))
-            end
-        end
-        hl = sort!(collect(structure))
-        Hnvalues = length(hl)
-        h_rows = [i for (i, j) in hl]
-        h_cols = [j for (i, j) in hl]
+    elseif jump !== nothing
+        h_rows0, h_cols0 = NonconvexCore.jump_hessian_structure(jump)
+        Hnvalues = length(h_rows0)
+        h_rows = Int.(h_rows0)
+        h_cols = Int.(h_cols0)
         HL0 = nothing
     else
         if symbolic
@@ -393,7 +384,9 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
     cub = zeros(nconstr)
 
     function eval_g(x::Vector{Float64}, g::Vector{Float64})
-        if symbolic
+        if jump !== nothing
+            NonconvexCore.jump_constraint_values!(jump, g, x)
+        elseif symbolic
             ineq_constr === nothing || (g[1:ineq_nconstr] .= ineq_constr(x))
             eq_constr === nothing || (g[ineq_nconstr+1:end] .= eq_constr(x))
         else
@@ -411,12 +404,23 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         return g
     end
     function eval_grad_f(x::Vector{Float64}, grad_f::Vector{Float64})
-        grad_f .= value_gradient(obj, x)[2]
+        if jump !== nothing
+            NonconvexCore.jump_objective_gradient!(jump, grad_f, x)
+        else
+            grad_f .= value_gradient(obj, x)[2]
+        end
     end
     function eval_jac_g(x::Vector{Float64}, rows::Vector{Int32}, cols::Vector{Int32}, values::Union{Nothing, Vector{Float64}})
         if values === nothing
-            ineqJ0 === nothing || fill_indices!(rows, cols, ineqJ0)
-            eqJ0 === nothing || fill_indices!(rows, cols, eqJ0, offset = Joffset, row_offset = ineq_nconstr)
+            if jump !== nothing
+                rows .= jac_rows
+                cols .= jac_cols
+            else
+                ineqJ0 === nothing || fill_indices!(rows, cols, ineqJ0)
+                eqJ0 === nothing || fill_indices!(rows, cols, eqJ0, offset = Joffset, row_offset = ineq_nconstr)
+            end
+        elseif jump !== nothing
+            NonconvexCore.jump_jacobian!(jump, values, x)
         elseif linear
             values .= jac0
         elseif symbolic
@@ -444,21 +448,14 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
     else
         eval_h = function (x::Vector{Float64}, rows::Vector{Int32}, cols::Vector{Int32}, obj_factor::Float64, lambda::Vector{Float64}, values::Union{Nothing, Vector{Float64}})
             if values === nothing
-                if jump_pieces !== nothing
+                if jump !== nothing
                     rows .= h_rows
                     cols .= h_cols
                 else
                     fill_indices!(rows, cols, HL0)
                 end
-            elseif jump_pieces !== nothing
-                objj, jumps = jump_pieces
-                H = obj_factor .* NonconvexCore.jump_symbolic_hessian(objj, x)
-                for (k, (cj, sign)) in enumerate(jumps)
-                    H .+= sign .* lambda[k] .* NonconvexCore.jump_symbolic_hessian(cj, x)
-                end
-                for k = 1:Hnvalues
-                    values[k] = H[h_rows[k], h_cols[k]]
-                end
+            elseif jump !== nothing
+                NonconvexCore.jump_hessian_lagrangian!(jump, values, x, obj_factor, lambda)
             elseif symbolic
                 _H = nc_hessian(lag(obj_factor, lambda), x)
                 HL = LowerTriangular(_H)
@@ -478,7 +475,7 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
     end
     prob = Ipopt.CreateIpoptProblem(
         nvars, xlb, xub, ineq_nconstr + eq_nconstr, clb, cub,
-        nvalues(ineqJ0) + nvalues(eqJ0), Hnvalues, obj,
+        jump !== nothing ? njacvals : nvalues(ineqJ0) + nvalues(eqJ0), Hnvalues, obj,
         eval_g, eval_grad_f, eval_jac_g, eval_h,
     )
     prob.x = x0
