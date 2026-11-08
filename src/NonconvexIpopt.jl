@@ -9,7 +9,8 @@ using NonconvexCore: AbstractOptimizer, CountingFunction
 using NonconvexCore: nvalues, fill_indices!, add_values!
 using NonconvexCore: Solution, ConvergenceState, NoCallback
 using NonconvexCore: getnineqconstraints, getneqconstraints
-import NonconvexCore: optimize!, sparse_jacobian, sparse_hessian, Workspace
+using NonconvexCore: VectorOfFunctions, getdim
+import NonconvexCore: optimize!, sparse_jacobian, sparse_hessian, value_jacobian, value_gradient, value_hessian, Workspace
 using Ipopt
 
 @params struct IpoptOptions
@@ -23,9 +24,6 @@ function IpoptOptions(;
     symbolic = false,
     kwargs...,
 )
-    sparse && !symbolic && error(
-        "The `sparse` option requires `symbolic = true`; the sparse-without-symbolic path is not implemented.",
-    )
     _hessian_approximation =
         hessian_approximation === nothing ? (first_order ? "limited-memory" : "exact") :
         hessian_approximation
@@ -215,15 +213,16 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             ineq_constr = symbolify(ineq_constr, x0; sparse, hessian = !first_order, simplify = true)
             ineq_constr_g = ineq_constr.flat_f.g
             ineq_constr_h = ineq_constr.flat_f.h
-        # elseif sparse
-        #     ineq_constr = sparsify(ineq_constr, x0; hessian = !first_order)
-        #     ineq_constr_g = ineq_constr.flat_f.J
-        #     ineq_constr_h = ineq_constr.flat_f.H
-        else
-            ineq_constr_g = x -> Zygote.jacobian(ineq_constr, x)[1]
+            ineqJ0 = ineq_constr_g(x0)
+        elseif sparse
+            ineq_constr_g = nothing
             ineq_constr_h = nothing
+            ineqJ0 = sparse_jacobian(ineq_constr, x0)
+        else
+            ineq_constr_g = nothing
+            ineq_constr_h = nothing
+            ineqJ0 = Matrix(value_jacobian(ineq_constr, x0)[2])
         end
-        ineqJ0 = ineq_constr_g(x0)
         ineq_nconstr, _ = size(ineqJ0)
         ineqJ0_nvalues = nvalues(ineqJ0)
         Joffset = ineqJ0_nvalues
@@ -240,17 +239,18 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             eq_constr = symbolify(eq_constr, x0; sparse, hessian = !first_order, simplify = true)
             eq_constr_g = eq_constr.flat_f.g
             eq_constr_h = eq_constr.flat_f.h
-        # elseif sparse
-        #     eq_constr = sparsify(eq_constr, x0; hessian = !first_order)
-        #     eq_constr_g = eq_constr.flat_f.J
-        #     eq_constr_h = eq_constr.flat_f.H
-        else
-            eq_constr_g = x -> Zygote.jacobian(eq_constr, x)[1]
+            eqJ0 = eq_constr_g(x0)
+        elseif sparse
+            eq_constr_g = nothing
             eq_constr_h = nothing
+            eqJ0 = sparse_jacobian(eq_constr, x0)
+        else
+            eq_constr_g = nothing
+            eq_constr_h = nothing
+            eqJ0 = Matrix(value_jacobian(eq_constr, x0)[2])
         end
-        eqJ0 = eq_constr_g(x0)
-        eqJ0_nvalues = nvalues(eqJ0)
         eq_nconstr, _ = size(eqJ0)
+        eqJ0_nvalues = nvalues(eqJ0)
     else
         eqJ0 = nothing
         eqJ0_nvalues = 0
@@ -258,7 +258,22 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         eq_constr_g = nothing
         eq_constr_h = nothing
     end
-    if sparse || symbolic
+    njacvals = ineqJ0_nvalues + eqJ0_nvalues
+    # The Jacobian structure is fixed from the initial point; values of later
+    # evaluations are extracted from dense Jacobians at these positions.
+    jac_rows = zeros(Int, njacvals)
+    jac_cols = zeros(Int, njacvals)
+    ineqJ0 === nothing || fill_indices!(jac_rows, jac_cols, ineqJ0)
+    eqJ0 === nothing ||
+        fill_indices!(jac_rows, jac_cols, eqJ0, offset = Joffset, row_offset = ineq_nconstr)
+    jac0 = zeros(njacvals)
+    for k = 1:Joffset
+        jac0[k] = ineqJ0[jac_rows[k], jac_cols[k]]
+    end
+    for k = (Joffset+1):njacvals
+        jac0[k] = eqJ0[jac_rows[k]-ineq_nconstr, jac_cols[k]]
+    end
+    if symbolic
         lag = (factor, y) -> SparseLagrangian(
             obj,
             x -> Zygote.gradient(obj, x)[1],
@@ -284,9 +299,15 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         Hnvalues = 0
     else
         L = lag(1.0, ones(ineq_nconstr + eq_nconstr))
-        protoH = nc_hessian(L, x0)
+        # The Hessian structure is detected once at `x0` with all constraint
+        # multipliers active so that it contains every possible entry.
+        protoH = symbolic ? nc_hessian(L, x0) :
+                 sparse ? sparse_hessian(L, x0) : nc_hessian(L, x0)
         HL0 = LowerTriangular(protoH)
         Hnvalues = nvalues(HL0)
+        h_rows = zeros(Int, Hnvalues)
+        h_cols = zeros(Int, Hnvalues)
+        fill_indices!(h_rows, h_cols, HL0)
     end
 
     clb = [fill(-Inf, ineq_nconstr); zeros(eq_nconstr)]
@@ -302,28 +323,30 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         return g
     end
     function eval_grad_f(x::Vector{Float64}, grad_f::Vector{Float64})
-        grad = Zygote.gradient(obj, x)[1]
-        if grad === nothing
-            grad_f .= 0
-        else
-            grad_f .= grad
-        end
+        grad_f .= value_gradient(obj, x)[2]
     end
     function eval_jac_g(x::Vector{Float64}, rows::Vector{Int32}, cols::Vector{Int32}, values::Union{Nothing, Vector{Float64}})
         if values === nothing
             ineqJ0 === nothing || fill_indices!(rows, cols, ineqJ0)
             eqJ0 === nothing || fill_indices!(rows, cols, eqJ0, offset = Joffset, row_offset = ineq_nconstr)
-        else
+        elseif linear
+            values .= jac0
+        elseif symbolic
             values .= 0
+            ineq_constr === nothing || add_values!(values, ineq_constr_g(x))
+            eq_constr === nothing || add_values!(values, eq_constr_g(x), offset = Joffset)
+        else
             if ineq_constr !== nothing
-                ineqJ = linear ? ineqJ0 : ineq_constr_g(x)
-                @assert nvalues(ineqJ) == ineqJ0_nvalues
-                add_values!(values, ineqJ)
+                J = Matrix(value_jacobian(ineq_constr, x)[2])
+                for k = 1:Joffset
+                    values[k] = J[jac_rows[k], jac_cols[k]]
+                end
             end
             if eq_constr !== nothing
-                eqJ = linear ? eqJ0 : eq_constr_g(x)
-                @assert nvalues(eqJ) == eqJ0_nvalues
-                add_values!(values, eqJ, offset = Joffset)
+                J = Matrix(value_jacobian(eq_constr, x)[2])
+                for k = (Joffset+1):njacvals
+                    values[k] = J[jac_rows[k]-ineq_nconstr, jac_cols[k]]
+                end
             end
         end
     end
@@ -334,12 +357,17 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         eval_h = function (x::Vector{Float64}, rows::Vector{Int32}, cols::Vector{Int32}, obj_factor::Float64, lambda::Vector{Float64}, values::Union{Nothing, Vector{Float64}})
             if values === nothing
                 fill_indices!(rows, cols, HL0)
-            else
+            elseif symbolic
                 _H = nc_hessian(lag(obj_factor, lambda), x)
                 HL = LowerTriangular(_H)
                 @assert nvalues(HL) == Hnvalues
                 values .= 0
                 add_values!(values, HL)
+            else
+                H = value_hessian(lag(obj_factor, lambda), x)
+                for k = 1:Hnvalues
+                    values[k] = H[h_rows[k], h_cols[k]]
+                end
             end
         end
     end
@@ -354,6 +382,18 @@ end
 
 _dot(f, x, y) = f(x)' * y
 _dot(::Nothing, ::Any, ::Any) = 0.0
+function _dot(f::VectorOfFunctions, x, y)
+    # Accumulate one term per function instead of calling `f(x)` as a whole so
+    # that reverse-mode backends differentiate each function separately.
+    s = 0.0
+    offset = 0
+    for fi in f.fs
+        dim = getdim(fi)
+        s += dot(fi(x), @view(y[offset+1:offset+dim]))
+        offset += dim
+    end
+    return s
+end
 _reshape_dot(::Nothing, x, ::Any) = zeros(length(x), length(x))
 _reshape_dot(f, x, y) = reshape(reshape(f(x), length(y), length(x)^2)' * y, length(x), length(x))
 
