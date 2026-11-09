@@ -1,4 +1,5 @@
 using NonconvexIpopt, LinearAlgebra, Test
+using Symbolics  # activates the NonconvexCoreSymbolicsExt extension (symbolic option)
 
 f(x::AbstractVector) = sqrt(x[2])
 g(x::AbstractVector, a, b) = (a*x[1] + b)^3 - x[2]

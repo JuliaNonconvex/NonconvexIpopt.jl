@@ -2,9 +2,9 @@ module NonconvexIpopt
 
 export IpoptAlg, IpoptOptions
 
-using Reexport, Parameters, SparseArrays, Zygote, NonconvexUtils
+using Reexport, Parameters, SparseArrays, Zygote
 @reexport using NonconvexCore
-using NonconvexCore: @params, VecModel, AbstractResult
+using NonconvexCore: @params, VecModel, AbstractResult, symbolify
 using NonconvexCore: AbstractOptimizer, CountingFunction
 using NonconvexCore: nvalues, fill_indices!, add_values!
 using NonconvexCore: Solution, ConvergenceState, NoCallback
@@ -214,7 +214,7 @@ function _jump_evaluator(obj, ineq_constr, eq_constr)
     objraw = obj isa CountingFunction ? obj.f : obj
     objraw = objraw isa NonconvexCore.Objective ? NonconvexCore.getfunction(objraw) : objraw
     objraw = objraw isa NonconvexCore.FlattenedFunction ? NonconvexCore.getrawfunction(objraw) : objraw
-    objraw isa NonconvexCore.JumpModelObjective || return nothing
+    objraw isa NonconvexCore.JuMPModelObjective || return nothing
     m = objraw.m
     cs = (
         (ineq_constr === nothing ? () : ineq_constr.fs)...,
@@ -223,7 +223,7 @@ function _jump_evaluator(obj, ineq_constr, eq_constr)
     for c in cs
         raw = c.f isa NonconvexCore.FlattenedFunction ? NonconvexCore.getrawfunction(c.f) : c.f
         raw = raw isa FunctionWrapper ? NonconvexCore.getfunction(raw) : raw
-        (raw isa NonconvexCore.JumpModelIneq || raw isa NonconvexCore.JumpModelEq) || return nothing
+        (raw isa NonconvexCore.JuMPModelIneq || raw isa NonconvexCore.JuMPModelEq) || return nothing
         raw.m === m || return nothing
     end
     return m
