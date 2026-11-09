@@ -128,9 +128,14 @@ end
 @testset "solver capabilities" begin
     caps = solver_capabilities(IpoptAlg())
     @test caps isa ConstraintCapabilities
-    @test caps.eq === true
-    @test caps.ineq === true
-    @test caps.sd === false
+    @test caps.linear_eq === true
+    @test caps.nonlinear_eq === true
+    @test caps.linear_ineq === true
+    @test caps.nonlinear_ineq === true
+    @test caps.linear_sd === false
+    @test caps.nonlinear_sd === false
     @test caps.box === true
+    @test caps.continuous === true
+    @test caps.binary === false
     @test caps.integer === false
 end

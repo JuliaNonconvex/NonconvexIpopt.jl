@@ -164,10 +164,15 @@ end
 struct IpoptAlg <: AbstractOptimizer end
 
 NonconvexCore.solver_capabilities(::IpoptAlg) = ConstraintCapabilities(
-    eq = true,
-    ineq = true,
-    sd = false,
+    linear_eq = true,
+    nonlinear_eq = true,
+    linear_ineq = true,
+    nonlinear_ineq = true,
+    linear_sd = false,
+    nonlinear_sd = false,
     box = true,
+    continuous = true,
+    binary = false,
     integer = false,
     infinite_bounds = true,
 )
