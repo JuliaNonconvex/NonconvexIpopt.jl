@@ -170,6 +170,7 @@ NonconvexCore.solver_capabilities(::IpoptAlg) = ConstraintCapabilities(
     sd = false,
     box = true,
     integer = false,
+    infinite_bounds = true,
 )
 
 function Workspace(model::VecModel, optimizer::IpoptAlg, x0::AbstractVector; kwargs...,)
