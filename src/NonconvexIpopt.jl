@@ -73,6 +73,18 @@ function IpoptWorkspace(
     callback::Function=NoCallback(),
     kwargs...,
 )
+    return _ipopt_workspace(model, x0, options, callback)
+end
+# A positional constructor on the raw options NamedTuple: JET (on Julia 1.13)
+# cannot resolve `Core.kwcall` on the keyword-only `IpoptOptions` constructor
+# during its virtual top-level replay, so analyzed code builds the default
+# options through this positional path instead.
+function IpoptWorkspace(model::VecModel, x0::AbstractVector, nt::NamedTuple)
+    options = haskey(nt, :options) ? nt[:options] : IpoptOptions((;))
+    callback = get(nt, :callback, NoCallback())
+    return _ipopt_workspace(model, x0, options, callback)
+end
+function _ipopt_workspace(model::VecModel, x0::AbstractVector, options, callback::Function)
     problem, counter = get_ipopt_problem(
         model,
         copy(x0),
@@ -196,7 +208,13 @@ function NonconvexCore.solver_capabilities(::IpoptAlg)
 end
 
 function Workspace(model::VecModel, optimizer::IpoptAlg, x0::AbstractVector; kwargs...)
-    return IpoptWorkspace(model, x0; kwargs...)
+    nt = (; kwargs...)
+    return _ipopt_workspace_nt(model, x0, nt)
+end
+function _ipopt_workspace_nt(model::VecModel, x0::AbstractVector, nt::NamedTuple)
+    options = haskey(nt, :options) ? nt[:options] : IpoptOptions((;))
+    callback = get(nt, :callback, NoCallback())
+    return _ipopt_workspace(model, x0, options, callback)
 end
 
 function get_ipopt_problem(
