@@ -10,7 +10,14 @@ using NonconvexCore: nvalues, fill_indices!, add_values!
 using NonconvexCore: Solution, ConvergenceState, NoCallback
 using NonconvexCore: getnineqconstraints, getneqconstraints
 using NonconvexCore: VectorOfFunctions, getdim
-import NonconvexCore: optimize!, sparse_jacobian, sparse_hessian, value_jacobian, value_gradient, value_hessian, Workspace
+import NonconvexCore:
+    optimize!,
+    sparse_jacobian,
+    sparse_hessian,
+    value_jacobian,
+    value_gradient,
+    value_hessian,
+    Workspace
 using NonconvexCore: getinputunflatten, getrawfunction
 using Ipopt
 
@@ -18,27 +25,33 @@ using Ipopt
     nt::NamedTuple
 end
 function IpoptOptions(;
-    first_order = true,
-    linear_constraints = false,
-    hessian_approximation = nothing,
-    sparse = false,
-    symbolic = false,
+    first_order=true,
+    linear_constraints=false,
+    hessian_approximation=nothing,
+    sparse=false,
+    symbolic=false,
     kwargs...,
 )
-    _hessian_approximation =
-        hessian_approximation === nothing ? (first_order ? "limited-memory" : "exact") :
+    _hessian_approximation = if hessian_approximation === nothing
+        (first_order ? "limited-memory" : "exact")
+    else
         hessian_approximation
-    jac_c_constant =
-        haskey(kwargs, :jac_c_constant) ? kwargs[:jac_c_constant] :
+    end
+    jac_c_constant = if haskey(kwargs, :jac_c_constant)
+        kwargs[:jac_c_constant]
+    else
         (linear_constraints ? "yes" : "no")
-    jac_d_constant =
-        haskey(kwargs, :jac_d_constant) ? kwargs[:jac_d_constant] :
+    end
+    jac_d_constant = if haskey(kwargs, :jac_d_constant)
+        kwargs[:jac_d_constant]
+    else
         (linear_constraints ? "yes" : "no")
+    end
     kwargs = (;
         kwargs...,
-        hessian_approximation = _hessian_approximation,
-        jac_c_constant = jac_c_constant,
-        jac_d_constant = jac_d_constant,
+        hessian_approximation=_hessian_approximation,
+        jac_c_constant=jac_c_constant,
+        jac_d_constant=jac_d_constant,
         sparse,
         symbolic,
     )
@@ -54,13 +67,15 @@ end
     callback::Function
 end
 function IpoptWorkspace(
-    model::VecModel, x0::AbstractVector = getinit(model);
-    options = IpoptOptions(),
-    callback::Function = NoCallback(),
+    model::VecModel,
+    x0::AbstractVector=getinit(model);
+    options=IpoptOptions(),
+    callback::Function=NoCallback(),
     kwargs...,
 )
     problem, counter = get_ipopt_problem(
-        model, copy(x0),
+        model,
+        copy(x0),
         options.nt.hessian_approximation == "limited-memory",
         options.nt.jac_c_constant == "yes" && options.nt.jac_d_constant == "yes",
         options.nt.sparse,
@@ -91,8 +106,7 @@ function optimize!(workspace::IpoptWorkspace)
     end
     solvestat = Ipopt.IpoptSolve(problem)
     return IpoptResult(
-        copy(problem.x), getobjective(model)(problem.x),
-        problem, solvestat, counter[]
+        copy(problem.x), getobjective(model)(problem.x), problem, solvestat, counter[]
     )
 end
 
@@ -113,26 +127,36 @@ function setup_intermediate_callback!(workspace::IpoptWorkspace)
     z_U = zeros(n)
     g = zeros(m)
     λ = zeros(m)
-    Ipopt.SetIntermediateCallback(problem, (
-        alg_mod,
-        iter_count,
-        obj_value,
-        inf_pr,
-        inf_du,
-        mu,
-        d_norm,
-        regularization_size,
-        alpha_du,
-        alpha_pr,
-        ls_trials,
-    ) -> begin
-        Ipopt.GetIpoptCurrentIterate(problem, false, n, x, z_L, z_U, m, g, λ)
-        callback(ipopt_solution(x, g, λ, obj_value, inf_pr, inf_du))
-        return true
-    end)
+    Ipopt.SetIntermediateCallback(
+        problem,
+        (
+            alg_mod,
+            iter_count,
+            obj_value,
+            inf_pr,
+            inf_du,
+            mu,
+            d_norm,
+            regularization_size,
+            alpha_du,
+            alpha_pr,
+            ls_trials,
+        ) -> begin
+            Ipopt.GetIpoptCurrentIterate(problem, false, n, x, z_L, z_U, m, g, λ)
+            callback(ipopt_solution(x, g, λ, obj_value, inf_pr, inf_du))
+            return true
+        end,
+    )
 end
 
-function ipopt_solution(x::AbstractVector, g::AbstractVector, λ::AbstractVector, obj_value::Real, inf_pr::Real, inf_du::Real)
+function ipopt_solution(
+    x::AbstractVector,
+    g::AbstractVector,
+    λ::AbstractVector,
+    obj_value::Real,
+    inf_pr::Real,
+    inf_du::Real,
+)
     n = length(x)
     m = length(g)
     convstate = ConvergenceState{Float64}()
@@ -140,15 +164,7 @@ function ipopt_solution(x::AbstractVector, g::AbstractVector, λ::AbstractVector
     convstate.ipopt_residual = inf_du
     convstate.infeas = inf_pr
     return Solution(
-        copy(x),
-        copy(x),
-        λ,
-        obj_value,
-        obj_value,
-        zeros(n),
-        g,
-        zeros(m, n),
-        convstate,
+        copy(x), copy(x), λ, obj_value, obj_value, zeros(n), g, zeros(m, n), convstate
     )
 end
 function addOption(prob, name, val::Int)
@@ -163,25 +179,34 @@ end
 
 struct IpoptAlg <: AbstractOptimizer end
 
-NonconvexCore.solver_capabilities(::IpoptAlg) = ConstraintCapabilities(
-    linear_eq = true,
-    nonlinear_eq = true,
-    linear_ineq = true,
-    nonlinear_ineq = true,
-    linear_sd = false,
-    nonlinear_sd = false,
-    box = true,
-    continuous = true,
-    binary = false,
-    integer = false,
-    infinite_bounds = true,
-)
+function NonconvexCore.solver_capabilities(::IpoptAlg)
+    return ConstraintCapabilities(;
+        linear_eq=true,
+        nonlinear_eq=true,
+        linear_ineq=true,
+        nonlinear_ineq=true,
+        linear_sd=false,
+        nonlinear_sd=false,
+        box=true,
+        continuous=true,
+        binary=false,
+        integer=false,
+        infinite_bounds=true,
+    )
+end
 
-function Workspace(model::VecModel, optimizer::IpoptAlg, x0::AbstractVector; kwargs...,)
+function Workspace(model::VecModel, optimizer::IpoptAlg, x0::AbstractVector; kwargs...)
     return IpoptWorkspace(model, x0; kwargs...)
 end
 
-function get_ipopt_problem(model::VecModel, x0::AbstractVector, first_order::Bool, linear::Bool, sparse::Bool, symbolic::Bool)
+function get_ipopt_problem(
+    model::VecModel,
+    x0::AbstractVector,
+    first_order::Bool,
+    linear::Bool,
+    sparse::Bool,
+    symbolic::Bool,
+)
     eq = if length(model.eq_constraints.fs) == 0
         nothing
     else
@@ -193,9 +218,9 @@ function get_ipopt_problem(model::VecModel, x0::AbstractVector, first_order::Boo
         model.ineq_constraints
     end
     _obj = if symbolic
-        symbolify(getobjective(model), x0; sparse, hessian = !first_order, simplify = true)
-    # elseif sparse
-    #     sparsify(getobjective(model), x0; hessian = !first_order)
+        symbolify(getobjective(model), x0; sparse, hessian=(!first_order), simplify=true)
+        # elseif sparse
+        #     sparsify(getobjective(model), x0; hessian = !first_order)
     else
         getobjective(model)
     end
@@ -211,14 +236,19 @@ function get_ipopt_problem(model::VecModel, x0::AbstractVector, first_order::Boo
         linear,
         sparse,
         symbolic,
-    ), obj.counter
+    ),
+    obj.counter
 end
 # The single Nonlinear evaluator of a JuMP-converted model, if the objective
 # and every constraint belong to it; otherwise `nothing`.
 function _jump_evaluator(obj, ineq_constr, eq_constr)
     objraw = obj isa CountingFunction ? obj.f : obj
     objraw = objraw isa NonconvexCore.Objective ? NonconvexCore.getfunction(objraw) : objraw
-    objraw = objraw isa NonconvexCore.FlattenedFunction ? NonconvexCore.getrawfunction(objraw) : objraw
+    objraw = if objraw isa NonconvexCore.FlattenedFunction
+        NonconvexCore.getrawfunction(objraw)
+    else
+        objraw
+    end
     objraw isa NonconvexCore.JuMPModelObjective || return nothing
     m = objraw.m
     cs = (
@@ -226,15 +256,22 @@ function _jump_evaluator(obj, ineq_constr, eq_constr)
         (eq_constr === nothing ? () : eq_constr.fs)...,
     )
     for c in cs
-        raw = c.f isa NonconvexCore.FlattenedFunction ? NonconvexCore.getrawfunction(c.f) : c.f
+        raw = if c.f isa NonconvexCore.FlattenedFunction
+            NonconvexCore.getrawfunction(c.f)
+        else
+            c.f
+        end
         raw = raw isa FunctionWrapper ? NonconvexCore.getfunction(raw) : raw
-        (raw isa NonconvexCore.JuMPModelIneq || raw isa NonconvexCore.JuMPModelEq) || return nothing
+        (raw isa NonconvexCore.JuMPModelIneq || raw isa NonconvexCore.JuMPModelEq) ||
+            return nothing
         raw.m === m || return nothing
     end
     return m
 end
 
-function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_order, linear, sparse, symbolic)
+function get_ipopt_problem(
+    obj, ineq_constr, eq_constr, x0, xlb, xub, first_order, linear, sparse, symbolic
+)
     nvars = length(x0)
     # Batched model pieces for the non-symbolic path: the raw user-facing
     # functions and a single input unflattening, so that every point rebuilds
@@ -243,14 +280,17 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
     unx = nothing
     ineq_cs = ()
     eq_cs = ()
-    rawpieces(c) = c.f isa NonconvexCore.FlattenedFunction ?
-                   (NonconvexCore.getrawfunction(c.f), NonconvexCore.getinputunflatten(c.f)) :
-                   (c.f, t -> (t,))
+    rawpieces(c) =
+        if c.f isa NonconvexCore.FlattenedFunction
+            (NonconvexCore.getrawfunction(c.f), NonconvexCore.getinputunflatten(c.f))
+        else
+            (c.f, t -> (t,))
+        end
     if ineq_constr !== nothing
         raw0, unx = rawpieces(ineq_constr.fs[1])
         ineq_cs = map(ineq_constr.fs) do c
             raw, _ = rawpieces(c)
-            (raw, c.rhs, c.dim)
+            return (raw, c.rhs, c.dim)
         end
     end
     if eq_constr !== nothing
@@ -259,18 +299,20 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         end
         eq_cs = map(eq_constr.fs) do c
             raw, _ = rawpieces(c)
-            (raw, c.rhs, c.dim)
+            return (raw, c.rhs, c.dim)
         end
     end
-    ineq_nconstr = sum(c -> c[3], ineq_cs; init = 0)
-    eq_nconstr = sum(c -> c[3], eq_cs; init = 0)
+    ineq_nconstr = sum(c -> c[3], ineq_cs; init=0)
+    eq_nconstr = sum(c -> c[3], eq_cs; init=0)
     nconstr = ineq_nconstr + eq_nconstr
     # A JuMP-converted model provides values, Jacobian and Lagrangian
     # Hessian directly from its single Nonlinear evaluator.
     jump = symbolic ? nothing : _jump_evaluator(obj, ineq_constr, eq_constr)
     if symbolic
         if ineq_constr !== nothing
-            ineq_constr = symbolify(ineq_constr, x0; sparse, hessian = !first_order, simplify = true)
+            ineq_constr = symbolify(
+                ineq_constr, x0; sparse, hessian=(!first_order), simplify=true
+            )
             ineq_constr_g = ineq_constr.flat_f.g
             ineq_constr_h = ineq_constr.flat_f.h
         else
@@ -278,7 +320,9 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             ineq_constr_h = nothing
         end
         if eq_constr !== nothing
-            eq_constr = symbolify(eq_constr, x0; sparse, hessian = !first_order, simplify = true)
+            eq_constr = symbolify(
+                eq_constr, x0; sparse, hessian=(!first_order), simplify=true
+            )
             eq_constr_g = eq_constr.flat_f.g
             eq_constr_h = eq_constr.flat_f.h
         else
@@ -291,10 +335,28 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         eqJ0_nvalues = nvalues(eqJ0)
         Joffset = ineqJ0_nvalues
     else
-        ineqJ0 = ineq_constr === nothing ? nothing :
-                 (sparse ? sparse_jacobian(ineq_constr, x0) : Matrix(value_jacobian(ineq_constr, x0)[2]))
-        eqJ0 = eq_constr === nothing ? nothing :
-               (sparse ? sparse_jacobian(eq_constr, x0) : Matrix(value_jacobian(eq_constr, x0)[2]))
+        ineqJ0 = if ineq_constr === nothing
+            nothing
+        else
+            (
+                if sparse
+                    sparse_jacobian(ineq_constr, x0)
+                else
+                    Matrix(value_jacobian(ineq_constr, x0)[2])
+                end
+            )
+        end
+        eqJ0 = if eq_constr === nothing
+            nothing
+        else
+            (
+                if sparse
+                    sparse_jacobian(eq_constr, x0)
+                else
+                    Matrix(value_jacobian(eq_constr, x0)[2])
+                end
+            )
+        end
         ineqJ0_nvalues = nvalues(ineqJ0)
         eqJ0_nvalues = nvalues(eqJ0)
         Joffset = ineqJ0_nvalues
@@ -317,46 +379,48 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
     else
         ineqJ0 === nothing || fill_indices!(jac_rows, jac_cols, ineqJ0)
         eqJ0 === nothing ||
-            fill_indices!(jac_rows, jac_cols, eqJ0, offset = Joffset, row_offset = ineq_nconstr)
+            fill_indices!(jac_rows, jac_cols, eqJ0; offset=Joffset, row_offset=ineq_nconstr)
     end
     jac0 = zeros(njacvals)
     if jump !== nothing
         NonconvexCore.jump_jacobian!(jump, jac0, x0)
     else
-        for k = 1:Joffset
+        for k in 1:Joffset
             jac0[k] = ineqJ0[jac_rows[k], jac_cols[k]]
         end
-        for k = (Joffset+1):njacvals
-            jac0[k] = eqJ0[jac_rows[k]-ineq_nconstr, jac_cols[k]]
+        for k in (Joffset + 1):njacvals
+            jac0[k] = eqJ0[jac_rows[k] - ineq_nconstr, jac_cols[k]]
         end
     end
     # For the non-symbolic second-order path the Lagrangian is a single
     # closure over mutable multipliers: the sparse Hessian preparation
     # (sparsity detection and coloring) happens once at construction and is
     # reused for every evaluation.
-    lag_refs = (factor = Ref(1.0), lambda = Ref(ones(nconstr)))
+    lag_refs = (factor=Ref(1.0), lambda=Ref(ones(nconstr)))
     if symbolic
-        lag = (factor, y) -> SparseLagrangian(
-            obj,
-            x -> Zygote.gradient(obj, x)[1],
-            x -> Zygote.hessian(obj, x),
-            factor,
-            ineq_constr,
-            ineq_constr_g,
-            ineq_constr_h,
-            eq_constr,
-            eq_constr_g,
-            eq_constr_h,
-            y[1:ineq_nconstr],
-            y[ineq_nconstr+1:end],
-        )
+        lag =
+            (factor, y) -> SparseLagrangian(
+                obj,
+                x -> Zygote.gradient(obj, x)[1],
+                x -> Zygote.hessian(obj, x),
+                factor,
+                ineq_constr,
+                ineq_constr_g,
+                ineq_constr_h,
+                eq_constr,
+                eq_constr_g,
+                eq_constr_h,
+                y[1:ineq_nconstr],
+                y[(ineq_nconstr + 1):end],
+            )
         lagf = nothing
     else
-        lagf = x -> begin
-            return lag_refs.factor[] * obj(x) +
-                   _dot(ineq_constr, x, @view(lag_refs.lambda[][1:ineq_nconstr])) +
-                   _dot(eq_constr, x, @view(lag_refs.lambda[][ineq_nconstr+1:end]))
-        end
+        lagf =
+            x -> begin
+                return lag_refs.factor[] * obj(x) +
+                       _dot(ineq_constr, x, @view(lag_refs.lambda[][1:ineq_nconstr])) +
+                       _dot(eq_constr, x, @view(lag_refs.lambda[][(ineq_nconstr + 1):end]))
+            end
     end
     if first_order
         Hnvalues = 0
@@ -376,8 +440,13 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         end
         # The Hessian structure is detected once at `x0` with all constraint
         # multipliers active so that it contains every possible entry.
-        protoH = symbolic ? nc_hessian(L, x0) :
-                 sparse ? sparse_hessian(L, x0) : nc_hessian(L, x0)
+        protoH = if symbolic
+            nc_hessian(L, x0)
+        elseif sparse
+            sparse_hessian(L, x0)
+        else
+            nc_hessian(L, x0)
+        end
         HL0 = LowerTriangular(protoH)
         Hnvalues = nvalues(HL0)
         h_rows = zeros(Int, Hnvalues)
@@ -393,16 +462,16 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             NonconvexCore.jump_constraint_values!(jump, g, x)
         elseif symbolic
             ineq_constr === nothing || (g[1:ineq_nconstr] .= ineq_constr(x))
-            eq_constr === nothing || (g[ineq_nconstr+1:end] .= eq_constr(x))
+            eq_constr === nothing || (g[(ineq_nconstr + 1):end] .= eq_constr(x))
         else
             d = unx(x)
             off = 0
             for (raw, rhs, dim) in ineq_cs
-                g[off+1:off+dim] .= raw(d...) .- rhs
+                g[(off + 1):(off + dim)] .= raw(d...) .- rhs
                 off += dim
             end
             for (raw, rhs, dim) in eq_cs
-                g[off+1:off+dim] .= raw(d...) .- rhs
+                g[(off + 1):(off + dim)] .= raw(d...) .- rhs
                 off += dim
             end
         end
@@ -415,14 +484,20 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
             grad_f .= value_gradient(obj, x)[2]
         end
     end
-    function eval_jac_g(x::Vector{Float64}, rows::Vector{Int32}, cols::Vector{Int32}, values::Union{Nothing, Vector{Float64}})
+    function eval_jac_g(
+        x::Vector{Float64},
+        rows::Vector{Int32},
+        cols::Vector{Int32},
+        values::Union{Nothing,Vector{Float64}},
+    )
         if values === nothing
             if jump !== nothing
                 rows .= jac_rows
                 cols .= jac_cols
             else
                 ineqJ0 === nothing || fill_indices!(rows, cols, ineqJ0)
-                eqJ0 === nothing || fill_indices!(rows, cols, eqJ0, offset = Joffset, row_offset = ineq_nconstr)
+                eqJ0 === nothing ||
+                    fill_indices!(rows, cols, eqJ0; offset=Joffset, row_offset=ineq_nconstr)
             end
         elseif jump !== nothing
             NonconvexCore.jump_jacobian!(jump, values, x)
@@ -431,27 +506,34 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         elseif symbolic
             values .= 0
             ineq_constr === nothing || add_values!(values, ineq_constr_g(x))
-            eq_constr === nothing || add_values!(values, eq_constr_g(x), offset = Joffset)
-    else
-        if ineq_constr !== nothing
-            J = Matrix(value_jacobian(ineq_constr, x)[2])
-            for k = 1:Joffset
-                values[k] = J[jac_rows[k], jac_cols[k]]
+            eq_constr === nothing || add_values!(values, eq_constr_g(x); offset=Joffset)
+        else
+            if ineq_constr !== nothing
+                J = Matrix(value_jacobian(ineq_constr, x)[2])
+                for k in 1:Joffset
+                    values[k] = J[jac_rows[k], jac_cols[k]]
+                end
+            end
+            if eq_constr !== nothing
+                J = Matrix(value_jacobian(eq_constr, x)[2])
+                for k in (Joffset + 1):njacvals
+                    values[k] = J[jac_rows[k] - ineq_nconstr, jac_cols[k]]
+                end
             end
         end
-        if eq_constr !== nothing
-            J = Matrix(value_jacobian(eq_constr, x)[2])
-            for k = (Joffset+1):njacvals
-                values[k] = J[jac_rows[k]-ineq_nconstr, jac_cols[k]]
-            end
-        end
-    end
     end
 
     if first_order
         eval_h = (x...) -> 0.0
     else
-        eval_h = function (x::Vector{Float64}, rows::Vector{Int32}, cols::Vector{Int32}, obj_factor::Float64, lambda::Vector{Float64}, values::Union{Nothing, Vector{Float64}})
+        eval_h = function (
+            x::Vector{Float64},
+            rows::Vector{Int32},
+            cols::Vector{Int32},
+            obj_factor::Float64,
+            lambda::Vector{Float64},
+            values::Union{Nothing,Vector{Float64}},
+        )
             if values === nothing
                 if jump !== nothing
                     rows .= h_rows
@@ -479,9 +561,19 @@ function get_ipopt_problem(obj, ineq_constr, eq_constr, x0, xlb, xub, first_orde
         end
     end
     prob = Ipopt.CreateIpoptProblem(
-        nvars, xlb, xub, ineq_nconstr + eq_nconstr, clb, cub,
-        jump !== nothing ? njacvals : nvalues(ineqJ0) + nvalues(eqJ0), Hnvalues, obj,
-        eval_g, eval_grad_f, eval_jac_g, eval_h,
+        nvars,
+        xlb,
+        xub,
+        ineq_nconstr + eq_nconstr,
+        clb,
+        cub,
+        jump !== nothing ? njacvals : nvalues(ineqJ0) + nvalues(eqJ0),
+        Hnvalues,
+        obj,
+        eval_g,
+        eval_grad_f,
+        eval_jac_g,
+        eval_h,
     )
     prob.x = x0
     return prob
@@ -496,15 +588,17 @@ function _dot(f::VectorOfFunctions, x, y)
     offset = 0
     for fi in f.fs
         dim = getdim(fi)
-        s += dot(fi(x), @view(y[offset+1:offset+dim]))
+        s += dot(fi(x), @view(y[(offset + 1):(offset + dim)]))
         offset += dim
     end
     return s
 end
 _reshape_dot(::Nothing, x, ::Any) = zeros(length(x), length(x))
-_reshape_dot(f, x, y) = reshape(reshape(f(x), length(y), length(x)^2)' * y, length(x), length(x))
+function _reshape_dot(f, x, y)
+    return reshape(reshape(f(x), length(y), length(x)^2)' * y, length(x), length(x))
+end
 
-struct SparseLagrangian{F0, J0, H0, F, G1, J1, H1, G2, J2, H2, L1, L2}
+struct SparseLagrangian{F0,J0,H0,F,G1,J1,H1,G2,J2,H2,L1,L2}
     f::F0
     fJ::J0
     fH::H0
@@ -526,7 +620,9 @@ function nc_gradient(l::SparseLagrangian, x)
 end
 nc_gradient(l, x) = Zygote.gradient(l, x)[1]
 function nc_hessian(l::SparseLagrangian, x)
-    return l.factor * l.fH(x) + _reshape_dot(l.ineqH, x, l.λ1) + _reshape_dot(l.eqH, x, l.λ2)
+    return l.factor * l.fH(x) +
+           _reshape_dot(l.ineqH, x, l.λ1) +
+           _reshape_dot(l.eqH, x, l.λ2)
 end
 nc_hessian(l, x) = Zygote.hessian(l, x)
 

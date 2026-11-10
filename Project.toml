@@ -13,6 +13,10 @@ SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
+Aqua = "0.8, 0.9"
+JET = "0.9, 0.10, 0.11, 0.12, 0.13"
+Symbolics = "7.48"
+Test = "1"
 Ipopt = "0.9, 1"
 LinearAlgebra = "1"
 NonconvexCore = "2"
@@ -23,8 +27,10 @@ Zygote = "0.6, 0.7"
 julia = "1.10"
 
 [extras]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Symbolics", "Test"]
+test = ["Symbolics", "Test", "Aqua", "JET"]
