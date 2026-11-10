@@ -1,6 +1,9 @@
+<p align="center">
+  <img src="assets/logo.png" width="400" alt="NonconvexIpopt.jl logo">
+</p>
+
 # NonconvexIpopt
 
-<img src="https://raw.githubusercontent.com/JuliaNonconvex/NonconvexIpopt.jl/master/docs/src/assets/logo.png" width="120" align="right"/>
 
 [![Build Status](https://github.com/JuliaNonconvex/NonconvexIpopt.jl/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/JuliaNonconvex/NonconvexIpopt.jl/actions)
 [![Coverage](https://codecov.io/gh/JuliaNonconvex/NonconvexIpopt.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/JuliaNonconvex/NonconvexIpopt.jl)
