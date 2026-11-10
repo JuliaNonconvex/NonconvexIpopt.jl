@@ -1,0 +1,11 @@
+name = "Ipopt"
+modules = ["NonconvexIpopt"]
+doctest_setup = "using NonconvexIpopt"
+
+[[pages]]
+title = "Ipopt"
+file = "index.md"
+
+[[pages]]
+title = "Docstrings"
+file = "docstrings.md"
