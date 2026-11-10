@@ -46,7 +46,7 @@ jobs:
             Pkg.precompile()'
 
       - name: Run JET on the PR branch
-        run: julia --project=test test/jet_report.jl --output ../pr_jet.json
+        run: julia --project=test test/jet_report.jl --output pr_jet.json
 
       - name: Post JET report comment
         uses: actions/github-script@v8
