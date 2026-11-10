@@ -10,6 +10,9 @@ Usage:
 """
 
 using JET, NonconvexIpopt, Dates
+# The `symbolic` option exercises NonconvexCore's Symbolics extension, so
+# load it for JET to see the `symbolify` methods.
+using Symbolics
 
 output_file = nothing
 for arg in ARGS
@@ -25,32 +28,32 @@ report = JET.report_package(NonconvexIpopt; target_modules=(NonconvexIpopt,))
 
 # Restrict the report to issues that originate in NonconvexIpopt's own source.
 # `report_package` also analyzes the dependency closure, surfacing errors that
-# are entirely inside third-party packages (SymbolicUtils, Ferrite, StaticArrays,
-# JSON, Roots, ...). Those cannot be fixed here and would drown out the real
+# are entirely inside third-party packages (SymbolicUtils, StaticArrays, Zygote,
+# Ipopt, ...). Those cannot be fixed here and would drown out the real
 # signal, so filter the reports down to the ones detected in NonconvexIpopt code.
-topopt_src = dirname(pathof(NonconvexIpopt))
-pkg_root = dirname(topopt_src)
-topopt_ext = joinpath(pkg_root, "ext")
+ipopt_src = dirname(pathof(NonconvexIpopt))
+pkg_root = dirname(ipopt_src)
+ipopt_ext = joinpath(pkg_root, "ext")
 
-function is_topopt_file(file)
+function is_ipopt_file(file)
     s = string(file)
-    return startswith(s, topopt_src) || startswith(s, topopt_ext)
+    return startswith(s, ipopt_src) || startswith(s, ipopt_ext)
 end
 
-function topopt_owned(r)
+function ipopt_owned(r)
     if r isa JET.InferenceErrorReport
         # `vst` is ordered entry point -> error point; the last frame is where
         # the error was detected.
         isempty(r.vst) && return true
-        return is_topopt_file(r.vst[end].file)
+        return is_ipopt_file(r.vst[end].file)
     elseif r isa JET.ToplevelErrorReport
-        return is_topopt_file(Symbol(r.file))
+        return is_ipopt_file(Symbol(r.file))
     end
     return true
 end
 
 all_reports = vcat(report.res.inference_error_reports, report.res.toplevel_error_reports)
-owned_reports = filter(topopt_owned, all_reports)
+owned_reports = filter(ipopt_owned, all_reports)
 n_filtered = length(all_reports) - length(owned_reports)
 
 # Print summary

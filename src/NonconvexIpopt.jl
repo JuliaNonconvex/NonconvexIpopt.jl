@@ -18,7 +18,7 @@ import NonconvexCore:
     value_gradient,
     value_hessian,
     Workspace
-using NonconvexCore: getinputunflatten, getrawfunction
+using NonconvexCore: getinit, getinputunflatten, getrawfunction
 using Ipopt
 
 @params struct IpoptOptions
@@ -105,9 +105,9 @@ function optimize!(workspace::IpoptWorkspace)
         setup_intermediate_callback!(workspace)
     end
     solvestat = Ipopt.IpoptSolve(problem)
-    return IpoptResult(
-        copy(problem.x), getobjective(model)(problem.x), problem, solvestat, counter[]
-    )
+    objective = getobjective(model)
+    objective === nothing && throw(ArgumentError("The model has no objective."))
+    return IpoptResult(copy(problem.x), objective(problem.x), problem, solvestat, counter[])
 end
 
 """
@@ -211,18 +211,18 @@ function get_ipopt_problem(
         nothing
     else
         model.eq_constraints
-    end
+    end::Union{Nothing,VectorOfFunctions}
     ineq = if length(model.ineq_constraints.fs) == 0
         nothing
     else
         model.ineq_constraints
-    end
+    end::Union{Nothing,VectorOfFunctions}
+    objective = getobjective(model)
+    objective === nothing && throw(ArgumentError("The model has no objective."))
     _obj = if symbolic
-        symbolify(getobjective(model), x0; sparse, hessian=(!first_order), simplify=true)
-        # elseif sparse
-        #     sparsify(getobjective(model), x0; hessian = !first_order)
+        symbolify(objective, x0; sparse, hessian=(!first_order), simplify=true)
     else
-        getobjective(model)
+        objective
     end
     obj = CountingFunction(_obj)
     return get_ipopt_problem(
@@ -270,7 +270,16 @@ function _jump_evaluator(obj, ineq_constr, eq_constr)
 end
 
 function get_ipopt_problem(
-    obj, ineq_constr, eq_constr, x0, xlb, xub, first_order, linear, sparse, symbolic
+    obj::CountingFunction,
+    ineq_constr::Union{Nothing,VectorOfFunctions},
+    eq_constr::Union{Nothing,VectorOfFunctions},
+    x0::AbstractVector,
+    xlb::AbstractVector,
+    xub::AbstractVector,
+    first_order::Bool,
+    linear::Bool,
+    sparse::Bool,
+    symbolic::Bool,
 )
     nvars = length(x0)
     # Batched model pieces for the non-symbolic path: the raw user-facing
@@ -280,12 +289,13 @@ function get_ipopt_problem(
     unx = nothing
     ineq_cs = ()
     eq_cs = ()
-    rawpieces(c) =
+    function rawpieces(c)
         if c.f isa NonconvexCore.FlattenedFunction
             (NonconvexCore.getrawfunction(c.f), NonconvexCore.getinputunflatten(c.f))
         else
             (c.f, t -> (t,))
         end
+    end
     if ineq_constr !== nothing
         raw0, unx = rawpieces(ineq_constr.fs[1])
         ineq_cs = map(ineq_constr.fs) do c
@@ -397,6 +407,8 @@ function get_ipopt_problem(
     # (sparsity detection and coloring) happens once at construction and is
     # reused for every evaluation.
     lag_refs = (factor=Ref(1.0), lambda=Ref(ones(nconstr)))
+    lagf = nothing
+    lag = nothing
     if symbolic
         lag =
             (factor, y) -> SparseLagrangian(
@@ -413,7 +425,6 @@ function get_ipopt_problem(
                 y[1:ineq_nconstr],
                 y[(ineq_nconstr + 1):end],
             )
-        lagf = nothing
     else
         lagf =
             x -> begin
@@ -432,6 +443,8 @@ function get_ipopt_problem(
         HL0 = nothing
     else
         if symbolic
+            lag === nothing &&
+                throw(ErrorException("Unreachable: symbolic path needs a Lagrangian."))
             L = lag(1.0, ones(nconstr))
         else
             lag_refs.factor[] = 1.0
@@ -544,6 +557,9 @@ function get_ipopt_problem(
             elseif jump !== nothing
                 NonconvexCore.jump_hessian_lagrangian!(jump, values, x, obj_factor, lambda)
             elseif symbolic
+                lag === nothing && throw(
+                    ErrorException("Unreachable: symbolic path needs a Lagrangian.")
+                )
                 _H = nc_hessian(lag(obj_factor, lambda), x)
                 HL = LowerTriangular(_H)
                 @assert nvalues(HL) == Hnvalues

@@ -1,4 +1,4 @@
-using Aqua, NonconvexIpopt
-
-# All Aqua quality gates are enabled. No tests are skipped.
-Aqua.test_all(NonconvexIpopt)
+@testitem "Aqua" begin
+    using Aqua, NonconvexIpopt
+    Aqua.test_all(NonconvexIpopt)
+end
