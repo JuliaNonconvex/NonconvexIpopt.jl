@@ -1,5 +1,7 @@
 # NonconvexIpopt
 
+<img src="https://raw.githubusercontent.com/JuliaNonconvex/NonconvexIpopt.jl/master/docs/src/assets/logo.png" width="120" align="right"/>
+
 [![Build Status](https://github.com/JuliaNonconvex/NonconvexIpopt.jl/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/JuliaNonconvex/NonconvexIpopt.jl/actions)
 [![Coverage](https://codecov.io/gh/JuliaNonconvex/NonconvexIpopt.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/JuliaNonconvex/NonconvexIpopt.jl)
 [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
