@@ -165,3 +165,80 @@ end
         @test caps.integer === false
     end
 end
+
+@testitem "Coverage cases" begin
+    using NonconvexIpopt, LinearAlgebra, Test
+
+    @testset "Linear constraints" begin
+        m = Model(x -> sum(x .^ 2))
+        addvar!(m, [0.1, 0.1], [10.0, 10.0])
+        add_ineq_constraint!(m, x -> 2.5 - x[1] - x[2]) # x1 + x2 >= 2.5
+        r = NonconvexIpopt.optimize(
+            m,
+            IpoptAlg(),
+            [1.0, 1.0];
+            options=IpoptOptions(linear_constraints=true, first_order=true),
+        )
+        @test abs(r.minimum - 2 * 1.25^2) < 1e-5
+        @test norm(r.minimizer - [1.25, 1.25]) < 1e-4
+    end
+
+    @testset "No inequality constraints" begin
+        m = Model(x -> sum((x .- [1.0, 2.0]) .^ 2))
+        addvar!(m, [0.0, 0.0], [3.0, 3.0])
+        add_eq_constraint!(m, x -> sum(x) - 3.0)
+        r = NonconvexIpopt.optimize(
+            m, IpoptAlg(), [0.5, 0.5]; options=IpoptOptions(first_order=true)
+        )
+        @test norm(r.minimizer - [1.0, 2.0]) < 1e-4
+    end
+
+    @testset "Constant objective (nothing gradient)" begin
+        m = Model(x -> 5.0)
+        addvar!(m, [0.0], [1.0])
+        r = NonconvexIpopt.optimize(
+            m, IpoptAlg(), [0.3]; options=IpoptOptions(first_order=true)
+        )
+        @test abs(r.minimum - 5.0) < 1e-8
+        @test r.status == "Solve_Succeeded"
+    end
+
+    @testset "Objective that throws" begin
+        m = Model(x -> sqrt(x[1]))
+        addvar!(m, [-1.0], [1.0])
+        # The exception from the objective propagates out of the solve.
+        @test_throws DomainError NonconvexIpopt.optimize(
+            m, IpoptAlg(), [-0.5]; options=IpoptOptions(first_order=true)
+        )
+    end
+
+    @testset "Status strings" begin
+        @test NonconvexIpopt.ipopt_status_string(0) == "Solve_Succeeded"
+        @test NonconvexIpopt.ipopt_status_string(2) == "Infeasible_Problem_Detected"
+        @test NonconvexIpopt.ipopt_status_string(-1) == "Maximum_Iterations_Exceeded"
+        @test NonconvexIpopt.ipopt_status_string(-12) == "Invalid_Option"
+        @test NonconvexIpopt.ipopt_status_string(12345) == "Unknown_Status"
+    end
+end
+
+@testitem "Option forwarding through optimize" begin
+    using NonconvexIpopt, LinearAlgebra, Test
+
+    f(x::AbstractVector) = sqrt(x[2])
+    g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
+    for opts in (
+        IpoptOptions(; first_order=true, tol=1e-6, max_iter=500, print_level=0),
+        IpoptOptions(; first_order=false, hessian_approximation="exact", print_level=0),
+        IpoptOptions(;
+            first_order=true, hessian_approximation="limited-memory", print_level=0
+        ),
+    )
+        m = Model(f)
+        addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+        add_ineq_constraint!(m, x -> g(x, 2, 0))
+        add_ineq_constraint!(m, x -> g(x, -1, 1))
+        r = NonconvexIpopt.optimize(m, IpoptAlg(), [1.234, 2.345]; options=opts)
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-4
+        @test r.status isa String
+    end
+end
