@@ -119,7 +119,42 @@ function optimize!(workspace::IpoptWorkspace)
     solvestat = Ipopt.IpoptSolve(problem)
     objective = getobjective(model)
     objective === nothing && throw(ArgumentError("The model has no objective."))
-    return IpoptResult(copy(problem.x), objective(problem.x), problem, solvestat, counter[])
+    return IpoptResult(
+        copy(problem.x),
+        objective(problem.x),
+        problem,
+        ipopt_status_string(solvestat),
+        counter[],
+    )
+end
+
+"""
+    ipopt_status_string(status::Integer)
+
+Maps the Ipopt solve status integer to its textual description, as documented
+in the [Ipopt output documentation](https://coin-or.github.io/Ipopt/OUTPUT.html).
+"""
+function ipopt_status_string(status::Integer)
+    status == 0 && return "Solve_Succeeded"
+    status == 1 && return "Solved_To_Acceptable_Level"
+    status == 2 && return "Infeasible_Problem_Detected"
+    status == 3 && return "Search_Direction_Becomes_Too_Small"
+    status == 4 && return "Diverging_Iterates"
+    status == 5 && return "User_Requested_Stop"
+    status == 6 && return "Feasible_Point_Found"
+    status == -1 && return "Maximum_Iterations_Exceeded"
+    status == -2 && return "Restoration_Failed"
+    status == -3 && return "Error_In_Step_Computation"
+    status == -4 && return "Maximum_CpuTime_Exceeded"
+    status == -10 && return "Not_Enough_Degrees_Of_Freedom"
+    status == -11 && return "Invalid_Problem_Definition"
+    status == -12 && return "Invalid_Option"
+    status == -13 && return "Invalid_Number_Detected"
+    status == -100 && return "Unrecoverable_Exception"
+    status == -101 && return "NonIpopt_Exception_Thrown"
+    status == -102 && return "Insufficient_Memory"
+    status == -999 && return "Internal_Error"
+    return "Unknown_Status"
 end
 
 """
@@ -512,7 +547,13 @@ function get_ipopt_problem(
         if jump !== nothing
             NonconvexCore.jump_objective_gradient!(jump, grad_f, x)
         else
-            grad_f .= value_gradient(obj, x)[2]
+            grad = value_gradient(obj, x)[2]
+            if grad === nothing
+                # Constant objectives: Zygote returns a `nothing` gradient.
+                fill!(grad_f, 0.0)
+            else
+                grad_f .= grad
+            end
         end
     end
     function eval_jac_g(
