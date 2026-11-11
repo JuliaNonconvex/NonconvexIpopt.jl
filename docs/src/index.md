@@ -1,6 +1,12 @@
 # Interior point method using `Ipopt.jl`
 
-![JuliaNonconvex logo](https://raw.githubusercontent.com/JuliaNonconvex/NonconvexIpopt.jl/master/docs/src/assets/logo.png)
+```@raw html
+<p align="center">
+  <img src="https://raw.githubusercontent.com/JuliaNonconvex/NonconvexIpopt.jl/master/docs/src/assets/logo.png" alt="JuliaNonconvex logo" width="180"/>
+</p>
+```
+
+
 
 ## Description
 
