@@ -3,6 +3,7 @@ module NonconvexIpopt
 export IpoptAlg, IpoptOptions
 
 using Reexport, Parameters, SparseArrays, Zygote
+import ForwardDiff
 @reexport using NonconvexCore
 using NonconvexCore: @params, VecModel, AbstractResult, symbolify
 using NonconvexCore: AbstractOptimizer, CountingFunction
@@ -10,6 +11,15 @@ using NonconvexCore: nvalues, fill_indices!, add_values!
 using NonconvexCore: Solution, ConvergenceState, NoCallback
 using NonconvexCore: getnineqconstraints, getneqconstraints
 using NonconvexCore: VectorOfFunctions, getdim
+
+# Nested-AD artifacts: a constraint (or its provided Jacobian function) that
+# differentiates internally can return ForwardDiff.Dual values, which makes
+# the Jacobian matrices Dual-typed. Ipopt's buffers are Float64, so strip the
+# dual wrapper wherever Jacobian values flow into them; the value part of a
+# nested dual is the actual derivative.
+_strip_dual(x) = x
+_strip_dual(x::ForwardDiff.Dual) = ForwardDiff.value(x)
+_strip_duals(A) = _strip_dual.(A)
 import NonconvexCore:
     optimize!,
     sparse_jacobian,
@@ -432,6 +442,8 @@ function get_ipopt_problem(
     else
         njacvals = ineqJ0_nvalues + eqJ0_nvalues
     end
+    ineqJ0 = ineqJ0 === nothing ? nothing : _strip_duals(ineqJ0)
+    eqJ0 = eqJ0 === nothing ? nothing : _strip_duals(eqJ0)
     # The Jacobian structure is fixed from the initial point.
     jac_rows = zeros(Int, njacvals)
     jac_cols = zeros(Int, njacvals)
@@ -506,13 +518,15 @@ function get_ipopt_problem(
         end
         # The Hessian structure is detected once at `x0` with all constraint
         # multipliers active so that it contains every possible entry.
-        protoH = if symbolic
-            nc_hessian(L, x0)
-        elseif sparse
-            sparse_hessian(L, x0)
-        else
-            nc_hessian(L, x0)
-        end
+        protoH = _strip_duals(
+            if symbolic
+                nc_hessian(L, x0)
+            elseif sparse
+                sparse_hessian(L, x0)
+            else
+                nc_hessian(L, x0)
+            end
+        )
         HL0 = LowerTriangular(protoH)
         Hnvalues = nvalues(HL0)
         h_rows = zeros(Int, Hnvalues)
@@ -527,17 +541,18 @@ function get_ipopt_problem(
         if jump !== nothing
             NonconvexCore.jump_constraint_values!(jump, g, x)
         elseif symbolic
-            ineq_constr === nothing || (g[1:ineq_nconstr] .= ineq_constr(x))
-            eq_constr === nothing || (g[(ineq_nconstr + 1):end] .= eq_constr(x))
+            ineq_constr === nothing || (g[1:ineq_nconstr] .= _strip_duals(ineq_constr(x)))
+            eq_constr === nothing ||
+                (g[(ineq_nconstr + 1):end] .= _strip_duals(eq_constr(x)))
         else
             d = unx(x)
             off = 0
             for (raw, rhs, dim) in ineq_cs
-                g[(off + 1):(off + dim)] .= raw(d...) .- rhs
+                g[(off + 1):(off + dim)] .= _strip_duals(raw(d...) .- rhs)
                 off += dim
             end
             for (raw, rhs, dim) in eq_cs
-                g[(off + 1):(off + dim)] .= raw(d...) .- rhs
+                g[(off + 1):(off + dim)] .= _strip_duals(raw(d...) .- rhs)
                 off += dim
             end
         end
@@ -552,7 +567,7 @@ function get_ipopt_problem(
                 # Constant objectives: Zygote returns a `nothing` gradient.
                 fill!(grad_f, 0.0)
             else
-                grad_f .= grad
+                grad_f .= _strip_duals(grad)
             end
         end
     end
@@ -577,17 +592,17 @@ function get_ipopt_problem(
             values .= jac0
         elseif symbolic
             values .= 0
-            ineq_constr === nothing || add_values!(values, ineq_constr_g(x))
-            eq_constr === nothing || add_values!(values, eq_constr_g(x); offset=Joffset)
+            ineq_constr === nothing || add_values!(values, _strip_duals(ineq_constr_g(x)))
+            eq_constr === nothing || add_values!(values, _strip_duals(eq_constr_g(x)); offset=Joffset)
         else
             if ineq_constr !== nothing
-                J = Matrix(value_jacobian(ineq_constr, x)[2])
+                J = _strip_duals(Matrix(value_jacobian(ineq_constr, x)[2]))
                 for k in 1:Joffset
                     values[k] = J[jac_rows[k], jac_cols[k]]
                 end
             end
             if eq_constr !== nothing
-                J = Matrix(value_jacobian(eq_constr, x)[2])
+                J = _strip_duals(Matrix(value_jacobian(eq_constr, x)[2]))
                 for k in (Joffset + 1):njacvals
                     values[k] = J[jac_rows[k] - ineq_nconstr, jac_cols[k]]
                 end
@@ -619,7 +634,7 @@ function get_ipopt_problem(
                 lag === nothing && throw(
                     ErrorException("Unreachable: symbolic path needs a Lagrangian.")
                 )
-                _H = nc_hessian(lag(obj_factor, lambda), x)
+                _H = _strip_duals(nc_hessian(lag(obj_factor, lambda), x))
                 HL = LowerTriangular(_H)
                 @assert nvalues(HL) == Hnvalues
                 values .= 0
@@ -627,7 +642,7 @@ function get_ipopt_problem(
             else
                 lag_refs.factor[] = obj_factor
                 lag_refs.lambda[] = lambda
-                H = sparse ? sparse_hessian(lagf, x) : nc_hessian(lagf, x)
+                H = _strip_duals(sparse ? sparse_hessian(lagf, x) : nc_hessian(lagf, x))
                 HL = LowerTriangular(H)
                 @assert nvalues(HL) == Hnvalues
                 values .= 0
@@ -635,6 +650,9 @@ function get_ipopt_problem(
             end
         end
     end
+    # Nested-AD artifacts can make the objective Dual-valued; Ipopt's C
+    # callback requires a Float64.
+    obj_eval = x -> _strip_dual(obj(x))
     prob = Ipopt.CreateIpoptProblem(
         nvars,
         xlb,
@@ -644,7 +662,7 @@ function get_ipopt_problem(
         cub,
         jump !== nothing ? njacvals : nvalues(ineqJ0) + nvalues(eqJ0),
         Hnvalues,
-        obj,
+        obj_eval,
         eval_g,
         eval_grad_f,
         eval_jac_g,
