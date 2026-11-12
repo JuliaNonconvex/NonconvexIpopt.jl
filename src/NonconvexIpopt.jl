@@ -3,7 +3,7 @@ module NonconvexIpopt
 export IpoptAlg, IpoptOptions
 
 using Reexport, Parameters, SparseArrays, Zygote
-import ForwardDiff
+using ForwardDiff: ForwardDiff
 @reexport using NonconvexCore
 using NonconvexCore: @params, VecModel, AbstractResult, symbolify
 using NonconvexCore: AbstractOptimizer, CountingFunction
@@ -525,7 +525,7 @@ function get_ipopt_problem(
                 sparse_hessian(L, x0)
             else
                 nc_hessian(L, x0)
-            end
+            end,
         )
         HL0 = LowerTriangular(protoH)
         Hnvalues = nvalues(HL0)
@@ -593,7 +593,8 @@ function get_ipopt_problem(
         elseif symbolic
             values .= 0
             ineq_constr === nothing || add_values!(values, _strip_duals(ineq_constr_g(x)))
-            eq_constr === nothing || add_values!(values, _strip_duals(eq_constr_g(x)); offset=Joffset)
+            eq_constr === nothing ||
+                add_values!(values, _strip_duals(eq_constr_g(x)); offset=Joffset)
         else
             if ineq_constr !== nothing
                 J = _strip_duals(Matrix(value_jacobian(ineq_constr, x)[2]))

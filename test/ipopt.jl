@@ -242,3 +242,36 @@ end
         @test r.status isa String
     end
 end
+
+@testitem "Dual-leaking constraints" begin
+    using NonconvexIpopt, ForwardDiff, Test, ChainRulesCore
+    using NonconvexCore: set_ad_backend!, get_ad_backend
+
+    # A constraint that leaks nested-AD duals: the rrule below returns its
+    # cotangent unprojected, so the function value (and, under Zygote, the
+    # Jacobian) stays Dual-typed even for Float64 input. This mirrors the
+    # surrogate constraints of the Bayesian package, whose predictions carry
+    # ForwardDiff duals. Ipopt's Float64 buffers must strip the dual wrapper
+    # instead of erroring.
+    leaky(t) = ForwardDiff.Dual{Nothing}(t * t, 2t)
+    function ChainRulesCore.rrule(::typeof(leaky), t)
+        y = leaky(t)
+        leaky_pb(Δ) = (ChainRulesCore.NoTangent(), Δ)
+        return y, leaky_pb
+    end
+    g(x) = [leaky(x[1]) + x[2] - 5.0]
+    f(x) = sqrt(x[2])
+
+    backend0 = get_ad_backend()
+    try
+        set_ad_backend!(AutoZygote())
+        m = Model(f)
+        addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+        add_ineq_constraint!(m, g)
+        r = NonconvexIpopt.optimize(m, IpoptAlg(), [1.234, 2.345]; options=IpoptOptions())
+        @test abs(r.minimum - sqrt(1e-4)) < 1e-3
+        @test r.minimizer[2] < 1e-3
+    finally
+        set_ad_backend!(backend0)
+    end
+end
