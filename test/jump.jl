@@ -78,5 +78,5 @@ end
         dm, IpoptAlg(), NonconvexCore.getinit(dm); options=IpoptOptions(; first_order=false)
     )
     @test startswith(r.status, "Solve_Succeeded")
-    @test r.minimum ≈ 0.0 atol=1e-5
+    @test r.minimum ≈ 0.0 atol = 1e-5
 end

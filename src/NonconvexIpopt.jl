@@ -600,13 +600,13 @@ function get_ipopt_problem(
                 add_values!(values, _strip_duals(eq_constr_g(x)); offset=Joffset)
         else
             if ineq_constr !== nothing
-J = _strip_duals(Matrix(_value_jacobian(ineq_constr, x)[2]))
+                J = _strip_duals(Matrix(_value_jacobian(ineq_constr, x)[2]))
                 for k in 1:Joffset
                     values[k] = J[jac_rows[k], jac_cols[k]]
                 end
             end
             if eq_constr !== nothing
-J = _strip_duals(Matrix(_value_jacobian(eq_constr, x)[2]))
+                J = _strip_duals(Matrix(_value_jacobian(eq_constr, x)[2]))
                 for k in (Joffset + 1):njacvals
                     values[k] = J[jac_rows[k] - ineq_nconstr, jac_cols[k]]
                 end
