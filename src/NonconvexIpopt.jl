@@ -90,7 +90,7 @@ end
 # during its virtual top-level replay, so analyzed code builds the default
 # options through this positional path instead.
 function IpoptWorkspace(model::VecModel, x0::AbstractVector, nt::NamedTuple)
-    options = haskey(nt, :options) ? nt[:options] : IpoptOptions((;))
+    options = haskey(nt, :options) ? nt[:options] : IpoptOptions()
     callback = get(nt, :callback, NoCallback())
     return _ipopt_workspace(model, x0, options, callback)
 end
@@ -200,7 +200,10 @@ function setup_intermediate_callback!(workspace::IpoptWorkspace)
             ls_trials,
         ) -> begin
             Ipopt.GetIpoptCurrentIterate(problem, false, n, x, z_L, z_U, m, g, λ)
-            callback(ipopt_solution(x, g, λ, obj_value, inf_pr, inf_du))
+            # `x`, `g` and `λ` are scratch buffers reused by Ipopt on every
+            # callback invocation: hand the solution fresh copies so that
+            # collected solutions keep independent arrays.
+            callback(ipopt_solution(x, copy(g), copy(λ), obj_value, inf_pr, inf_du))
             return true
         end,
     )
@@ -256,8 +259,11 @@ function Workspace(model::VecModel, optimizer::IpoptAlg, x0::AbstractVector; kwa
     nt = (; kwargs...)
     return _ipopt_workspace_nt(model, x0, nt)
 end
+function Workspace(model::VecModel, optimizer::IpoptAlg; kwargs...)
+    return Workspace(model, optimizer, getinit(model); kwargs...)
+end
 function _ipopt_workspace_nt(model::VecModel, x0::AbstractVector, nt::NamedTuple)
-    options = haskey(nt, :options) ? nt[:options] : IpoptOptions((;))
+    options = haskey(nt, :options) ? nt[:options] : IpoptOptions()
     callback = get(nt, :callback, NoCallback())
     return _ipopt_workspace(model, x0, options, callback)
 end
