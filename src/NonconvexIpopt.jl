@@ -90,7 +90,7 @@ end
 # during its virtual top-level replay, so analyzed code builds the default
 # options through this positional path instead.
 function IpoptWorkspace(model::VecModel, x0::AbstractVector, nt::NamedTuple)
-    options = haskey(nt, :options) ? nt[:options] : IpoptOptions()
+    options = haskey(nt, :options) ? nt[:options] : IpoptOptions((;))
     callback = get(nt, :callback, NoCallback())
     return _ipopt_workspace(model, x0, options, callback)
 end
@@ -263,7 +263,7 @@ function Workspace(model::VecModel, optimizer::IpoptAlg; kwargs...)
     return Workspace(model, optimizer, getinit(model); kwargs...)
 end
 function _ipopt_workspace_nt(model::VecModel, x0::AbstractVector, nt::NamedTuple)
-    options = haskey(nt, :options) ? nt[:options] : IpoptOptions()
+    options = haskey(nt, :options) ? nt[:options] : IpoptOptions((;))
     callback = get(nt, :callback, NoCallback())
     return _ipopt_workspace(model, x0, options, callback)
 end
