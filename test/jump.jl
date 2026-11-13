@@ -80,3 +80,16 @@ end
     @test startswith(r.status, "Solve_Succeeded")
     @test r.minimum ≈ 0.0 atol = 1e-5
 end
+
+
+# The JET analysis must run after every other testitem: JET's toplevel
+# package analysis re-evaluates the package definitions in the live session,
+# which replaces the struct types (e.g. IpoptOptions) and invalidates their
+# keyword constructors for anything that runs afterwards.
+@testitem "JET" begin
+    using JET, NonconvexIpopt
+    # The `symbolic` option exercises NonconvexCore's Symbolics extension, so
+    # load it for JET to see the `symbolify` methods.
+    using Symbolics
+    JET.test_package(NonconvexIpopt; target_modules=(NonconvexIpopt,))
+end
