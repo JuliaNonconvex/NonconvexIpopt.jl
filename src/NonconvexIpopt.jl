@@ -28,6 +28,7 @@ import NonconvexCore:
     value_gradient,
     value_hessian,
     Workspace
+# (options and workspace constructors follow)
 using NonconvexCore: getinit, getinputunflatten, getrawfunction
 using Ipopt
 
