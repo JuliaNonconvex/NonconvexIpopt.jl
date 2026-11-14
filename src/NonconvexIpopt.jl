@@ -68,11 +68,12 @@ function IpoptOptions(;
     return IpoptOptions(kwargs)
 end
 
-# Zero-argument positional method mirroring the keyword constructor's
-# defaults. JET (on Julia 1.13) cannot resolve `Core.kwcall` on the
-# keyword-only constructor, so the analyzed zero-arg path must build the
-# default options NamedTuple positionally instead of relying on kwcall.
-function IpoptOptions()
+# Build the default options through the positional NamedTuple constructor.
+# JET (on Julia 1.13) cannot resolve `Core.kwcall` on the keyword-only
+# `IpoptOptions` constructor during its virtual top-level replay, so package
+# code must not call `IpoptOptions()` with no arguments; it goes through this
+# positional path instead. Mirrors the keyword constructor's defaults.
+function _default_options()
     return IpoptOptions((
         hessian_approximation="limited-memory",
         jac_c_constant="no",
@@ -104,7 +105,7 @@ end
 # during its virtual top-level replay, so analyzed code builds the default
 # options through this positional path instead.
 function IpoptWorkspace(model::VecModel, x0::AbstractVector, nt::NamedTuple)
-    options = haskey(nt, :options) ? nt[:options] : IpoptOptions()
+    options = haskey(nt, :options) ? nt[:options] : _default_options()
     callback = get(nt, :callback, NoCallback())
     return _ipopt_workspace(model, x0, options, callback)
 end
@@ -277,7 +278,7 @@ function Workspace(model::VecModel, optimizer::IpoptAlg; kwargs...)
     return Workspace(model, optimizer, getinit(model); kwargs...)
 end
 function _ipopt_workspace_nt(model::VecModel, x0::AbstractVector, nt::NamedTuple)
-    options = haskey(nt, :options) ? nt[:options] : IpoptOptions()
+    options = haskey(nt, :options) ? nt[:options] : _default_options()
     callback = get(nt, :callback, NoCallback())
     return _ipopt_workspace(model, x0, options, callback)
 end
