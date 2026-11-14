@@ -32,6 +32,33 @@ import NonconvexCore:
 using NonconvexCore: getinit, getinputunflatten, getrawfunction
 using Ipopt
 
+"""
+    IpoptOptions(; first_order=true, linear_constraints=false,
+                 hessian_approximation=nothing, sparse=false, symbolic=false,
+                 kwargs...)
+
+Options for [`IpoptAlg`](@ref), passed to `optimize` as `options = ...`.
+
+The four package-specific options are:
+
+- `first_order`: `true` by default. When `true`, a first-order Ipopt run
+  with an L-BFGS Hessian approximation is used; when `false`, the
+  second-order algorithm with exact Hessians is used.
+- `symbolic`: `false` by default. When `true`, the gradients, Jacobians and
+  Hessians are computed with symbolic differentiation from
+  [Symbolics.jl](https://github.com/JuliaSymbolics/Symbolics.jl), as in
+  NonconvexCore's `symbolify`.
+- `sparse`: `false` by default. When `true`, the derivatives are treated as
+  sparse; combined with `symbolic = true` the output of the symbolic
+  differentiation is sparse, otherwise sparsity is exploited with
+  `SparseDiffTools.jl` using a Symbolics-derived sparsity pattern.
+- `linear_constraints`: `false` by default. When `true`, the constraint
+  Jacobian is computed and sparsified once at the beginning instead of
+  computing dense Jacobians every iteration.
+
+All remaining keyword arguments are forwarded to Ipopt; see the
+[Ipopt options documentation](https://coin-or.github.io/Ipopt/OPTIONS.html).
+"""
 @params struct IpoptOptions
     nt::NamedTuple
 end
@@ -253,6 +280,20 @@ function addOption(prob, name, val)
     return Ipopt.AddIpoptNumOption(prob, name, val)
 end
 
+"""
+    IpoptAlg()
+
+The [Ipopt](https://coin-or.github.io/Ipopt) interior point optimizer
+wrapped through [Ipopt.jl](https://github.com/jump-dev/Ipopt.jl) for the
+Nonconvex interface.
+
+With the default `first_order = true` option it behaves as a first-order
+optimizer using an L-BFGS approximation of the Hessian of the Lagrangian;
+with `first_order = false` it is a full second-order optimizer. All options
+are given through [`IpoptOptions`](@ref). Supports finite and infinite
+bounds, and nonlinear inequality and equality constraints (no semidefinite
+constraints or integer variables).
+"""
 struct IpoptAlg <: AbstractOptimizer end
 
 function NonconvexCore.solver_capabilities(::IpoptAlg)
