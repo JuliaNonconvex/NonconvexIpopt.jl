@@ -384,8 +384,7 @@ end
     ) === nothing
 
     # Pure affine/quadratic JuMP models convert through the closed-form
-    # channel, not through a JuMPModelObjective, so there is no shared
-    # evaluator.
+    # channel; the fast path covers them through the shared evaluator too.
     jm = JuMP.Model()
     JuMP.@variable(jm, x[1:2])
     JuMP.@constraint(jm, x[1]^2 + x[2]^2 <= 1.0)
@@ -395,7 +394,7 @@ end
         NonconvexCore.getobjective(dm),
         NonconvexCore.getineqconstraints(dm),
         NonconvexCore.geteqconstraints(dm),
-    ) === nothing
+    ) !== nothing
 
     # Nonlinear JuMP models: the objective and constraints share the single
     # Nonlinear evaluator, so it is returned.
