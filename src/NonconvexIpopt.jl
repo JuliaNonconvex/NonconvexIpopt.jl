@@ -28,6 +28,7 @@ import NonconvexCore:
     value_gradient,
     value_hessian,
     Workspace
+# (options and workspace constructors follow)
 using NonconvexCore: getinit, getinputunflatten, getrawfunction
 using Ipopt
 
@@ -407,15 +408,25 @@ function get_ipopt_problem(
         ineqJ0_nvalues = nvalues(ineqJ0)
         eqJ0_nvalues = nvalues(eqJ0)
         Joffset = ineqJ0_nvalues
+        njacvals = ineqJ0_nvalues + eqJ0_nvalues
+    elseif jump !== nothing
+        # The JuMP-converted path: the Jacobian structure and values come
+        # straight from the single Nonlinear evaluator. Skip the AD-based
+        # Jacobian below entirely: computing it just to discard it costs a
+        # dense differentiation pass on every solve (seconds on large models).
+        ineqJ0 = nothing
+        eqJ0 = nothing
+        Joffset = 0
+        njacvals = length(NonconvexCore.jump_jacobian_structure(jump)[1])
     else
         ineqJ0 = if ineq_constr === nothing
             nothing
         else
             (
                 if sparse
-                    sparse_jacobian(ineq_constr, x0)
+                    _sparse_jacobian(ineq_constr, x0)
                 else
-                    Matrix(value_jacobian(ineq_constr, x0)[2])
+                    Matrix(_value_jacobian(ineq_constr, x0)[2])
                 end
             )
         end
@@ -424,22 +435,15 @@ function get_ipopt_problem(
         else
             (
                 if sparse
-                    sparse_jacobian(eq_constr, x0)
+                    _sparse_jacobian(eq_constr, x0)
                 else
-                    Matrix(value_jacobian(eq_constr, x0)[2])
+                    Matrix(_value_jacobian(eq_constr, x0)[2])
                 end
             )
         end
         ineqJ0_nvalues = nvalues(ineqJ0)
         eqJ0_nvalues = nvalues(eqJ0)
         Joffset = ineqJ0_nvalues
-    end
-    if jump !== nothing
-        ineqJ0 = nothing
-        eqJ0 = nothing
-        Joffset = 0
-        njacvals = length(NonconvexCore.jump_jacobian_structure(jump)[1])
-    else
         njacvals = ineqJ0_nvalues + eqJ0_nvalues
     end
     ineqJ0 = ineqJ0 === nothing ? nothing : _strip_duals(ineqJ0)
@@ -597,13 +601,13 @@ function get_ipopt_problem(
                 add_values!(values, _strip_duals(eq_constr_g(x)); offset=Joffset)
         else
             if ineq_constr !== nothing
-                J = _strip_duals(Matrix(value_jacobian(ineq_constr, x)[2]))
+                J = _strip_duals(Matrix(_value_jacobian(ineq_constr, x)[2]))
                 for k in 1:Joffset
                     values[k] = J[jac_rows[k], jac_cols[k]]
                 end
             end
             if eq_constr !== nothing
-                J = _strip_duals(Matrix(value_jacobian(eq_constr, x)[2]))
+                J = _strip_duals(Matrix(_value_jacobian(eq_constr, x)[2]))
                 for k in (Joffset + 1):njacvals
                     values[k] = J[jac_rows[k] - ineq_nconstr, jac_cols[k]]
                 end
@@ -675,6 +679,11 @@ end
 
 _dot(f, x, y) = f(x)' * y
 _dot(::Nothing, ::Any, ::Any) = 0.0
+# Indirection over the AD Jacobian entry points so tests can spy on fallback
+# usage: the JuMP-converted fast path must never hit these. (Plain assignments,
+# not method definitions, so the bindings stay mutable for the test spy.)
+_value_jacobian = (args...) -> value_jacobian(args...)
+_sparse_jacobian = (args...) -> sparse_jacobian(args...)
 function _dot(f::VectorOfFunctions, x, y)
     # Accumulate one term per function instead of calling `f(x)` as a whole so
     # that reverse-mode backends differentiate each function separately.
