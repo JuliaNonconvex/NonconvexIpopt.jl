@@ -81,7 +81,6 @@ end
     @test r.minimum ≈ 0.0 atol = 1e-5
 end
 
-
 # The JET analysis must run after every other testitem: JET's toplevel
 # package analysis re-evaluates the package definitions in the live session,
 # which replaces the struct types (e.g. IpoptOptions) and invalidates their
