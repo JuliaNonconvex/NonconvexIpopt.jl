@@ -275,3 +275,58 @@ end
         set_ad_backend!(backend0)
     end
 end
+
+@testitem "Audit regressions" begin
+    using NonconvexIpopt, LinearAlgebra, Test
+    using NonconvexCore: Solution
+
+    f(x::AbstractVector) = sqrt(x[2])
+    g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
+
+    @testset "Optimize without options" begin
+        # Regression: the default options used to hit a FieldError in the
+        # NamedTuple constructors (`IpoptOptions((;))`).
+        m = Model(f)
+        addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+        add_ineq_constraint!(m, x -> g(x, 2, 0))
+        add_ineq_constraint!(m, x -> g(x, -1, 1))
+        r = NonconvexIpopt.optimize(m, IpoptAlg(), [1.234, 2.345])
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-6
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-6
+    end
+
+    @testset "Optimize without x0" begin
+        # Regression: `optimize(model, alg)` had no Workspace constructor.
+        m = Model(f)
+        addvar!(m, [1e-4, 1e-4], [10.0, 10.0]; init=[1.234, 2.345])
+        add_ineq_constraint!(m, x -> g(x, 2, 0))
+        add_ineq_constraint!(m, x -> g(x, -1, 1))
+        r = NonconvexIpopt.optimize(m, IpoptAlg())
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-6
+        @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-6
+    end
+
+    @testset "Callback solutions have independent g and λ" begin
+        # Regression: every intermediate-callback Solution used to alias the
+        # same `g`/`λ` scratch buffers, so collected solutions shared arrays.
+        m = Model(f)
+        addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+        add_ineq_constraint!(m, x -> g(x, 2, 0))
+        add_ineq_constraint!(m, x -> g(x, -1, 1))
+        sols = Solution[]
+        cb(s) = (push!(sols, s); nothing)
+        r = NonconvexIpopt.optimize(m, IpoptAlg(), [1.234, 2.345]; callback=cb)
+        @test abs(r.minimum - sqrt(8 / 27)) < 1e-6
+        @test length(sols) >= 2
+        # Mutate every stored solution with a distinct marker: aliased
+        # buffers would all end up equal to the last marker.
+        for (i, s) in enumerate(sols)
+            s.g .= i
+            s.λ .= -i
+        end
+        for i in eachindex(sols)
+            @test all(sols[i].g .== i)
+            @test all(sols[i].λ .== -i)
+        end
+    end
+end
