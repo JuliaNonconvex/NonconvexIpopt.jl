@@ -330,3 +330,184 @@ end
         end
     end
 end
+
+@testitem "JuMP-converted models use the evaluator fast path" begin
+    using NonconvexIpopt, NonconvexCore, JuMP, Ipopt, LinearAlgebra, Test
+
+    function jump_model()
+        m = JuMP.Model()
+        JuMP.@variable(m, x[1:3] >= -5.0, start=0.5)
+        JuMP.@constraint(m, x[1] + x[2] == 1.0)
+        JuMP.@constraint(m, x[2]^2 + x[3]^2 <= 2.0)
+        JuMP.@constraint(m, x[1] + cos(x[2] * x[3]) <= 2.5)
+        JuMP.@constraint(m, sin(x[1]) + x[3] >= -1.0)
+        JuMP.@objective(m, Min, (x[1] - 1)^2 + (x[2] - 2)^2 + x[3]^2)
+        return m
+    end
+
+    dm = NonconvexCore.DictModel(jump_model())
+    obj = NonconvexCore.getobjective(dm)
+    raw = if obj.f isa NonconvexCore.FlattenedFunction
+        NonconvexCore.getrawfunction(obj.f)
+    else
+        obj.f
+    end
+    @test raw isa NonconvexCore.JuMPModelObjective
+
+    # symbolic=false routes through _jump_evaluator and reads the Jacobian
+    # and Hessian straight from the single Nonlinear evaluator; both
+    # first-order and second-order variants exercise the sparse jump branch.
+    for symbolic in (false,), first_order in (true, false)
+        r = NonconvexIpopt.optimize(
+            dm,
+            IpoptAlg(),
+            NonconvexCore.getinit(dm);
+            options=IpoptOptions(first_order=first_order, symbolic=symbolic, max_iter=200),
+        )
+        @test isfinite(r.minimum)
+        @test r.minimizer !== nothing
+    end
+end
+
+@testitem "_jump_evaluator branches" begin
+    using NonconvexIpopt, NonconvexCore, JuMP, Test
+
+    # Plain models: no shared JuMP evaluator.
+    m = NonconvexCore.Model(x -> sum(x .^ 2))
+    addvar!(m, [-1.0, -1.0], [1.0, 1.0])
+    add_ineq_constraint!(m, x -> x[1]^2 + x[2]^2 - 1.0)
+    vm = NonconvexCore.tovecmodel(m)[1]
+    @test NonconvexIpopt._jump_evaluator(
+        NonconvexCore.getobjective(vm),
+        NonconvexCore.getineqconstraints(vm),
+        NonconvexCore.geteqconstraints(vm),
+    ) === nothing
+
+    # Pure affine/quadratic JuMP models convert through the closed-form
+    # channel, not through a JuMPModelObjective, so there is no shared
+    # evaluator.
+    jm = JuMP.Model()
+    JuMP.@variable(jm, x[1:2])
+    JuMP.@constraint(jm, x[1]^2 + x[2]^2 <= 1.0)
+    JuMP.@objective(jm, Min, x[1] + x[2])
+    dm = NonconvexCore.DictModel(jm)
+    @test NonconvexIpopt._jump_evaluator(
+        NonconvexCore.getobjective(dm),
+        NonconvexCore.getineqconstraints(dm),
+        NonconvexCore.geteqconstraints(dm),
+    ) === nothing
+
+    # Nonlinear JuMP models: the objective and constraints share the single
+    # Nonlinear evaluator, so it is returned.
+    jn = JuMP.Model()
+    JuMP.@variable(jn, x[1:2])
+    JuMP.@constraint(jn, sin(x[1]) + x[2] <= 1.0)
+    JuMP.@objective(jn, Min, (x[1] - 1)^2 + cos(x[2]))
+    dn = NonconvexCore.DictModel(jn)
+    ev = NonconvexIpopt._jump_evaluator(
+        NonconvexCore.getobjective(dn),
+        NonconvexCore.getineqconstraints(dn),
+        NonconvexCore.geteqconstraints(dn),
+    )
+    @test ev !== nothing
+end
+
+@testitem "Remaining option and branch coverage" begin
+    using NonconvexIpopt, NonconvexCore, LinearAlgebra, Test
+
+    # jac_d_constant keyword forwarding.
+    o = IpoptOptions(jac_d_constant="yes")
+    @test o.nt.jac_d_constant == "yes"
+
+    # A string-valued Ipopt option goes through the generic addOption method.
+    m = NonconvexCore.Model(x -> sum(x .^ 2))
+    addvar!(m, [-5.0, -5.0], [5.0, 5.0])
+    r = NonconvexIpopt.optimize(
+        m,
+        IpoptAlg(),
+        [1.0, 1.0];
+        options=IpoptOptions(linear_solver="ma57", max_iter=50, tol=1e-7),
+    )
+    @test isfinite(r.minimum)
+
+    # Symbolic path without inequality constraints (the ineq nothing branch).
+    m2 = NonconvexCore.Model(x -> (x[1] - 1.0)^2 + 100.0 * (x[2] - x[1]^2)^2)
+    addvar!(m2, [-5.0, -5.0], [5.0, 5.0])
+    r2 = NonconvexIpopt.optimize(
+        m2, IpoptAlg(), [-1.0, 1.0]; options=IpoptOptions(symbolic=true, max_iter=200)
+    )
+    @test isfinite(r2.minimum)
+end
+
+@testitem "Default options without an options kwarg" begin
+    using NonconvexIpopt, NonconvexCore, LinearAlgebra, Test
+
+    f(x::AbstractVector) = sqrt(x[2])
+    g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
+
+    m = Model(f)
+    addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+    add_ineq_constraint!(m, x -> g(x, 2, 0))
+    add_ineq_constraint!(m, x -> g(x, -1, 1))
+
+    # No `options` kwarg: the workspace used to build `IpoptOptions((;))`
+    # (an empty NamedTuple) and then FieldError on
+    # `options.nt.hessian_approximation`.
+    r = NonconvexIpopt.optimize(m, IpoptAlg(), [1.234, 2.345])
+    @test abs(r.minimum - sqrt(8 / 27)) < 1e-6
+    @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-6
+
+    # The positional IpoptWorkspace constructor (used by static analysis)
+    # has the same default-options defect.
+    vm = NonconvexCore.tovecmodel(m)[1]
+    w = NonconvexIpopt.IpoptWorkspace(vm, [1.234, 2.345], (;))
+    r2 = NonconvexIpopt.optimize!(w)
+    @test abs(r2.minimum - sqrt(8 / 27)) < 1e-6
+end
+
+@testitem "Workspace without x0 defaults to the model init" begin
+    using NonconvexIpopt, LinearAlgebra, Test
+
+    f(x::AbstractVector) = sqrt(x[2])
+    g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
+
+    m = Model(f)
+    addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+    add_ineq_constraint!(m, x -> g(x, 2, 0))
+    add_ineq_constraint!(m, x -> g(x, -1, 1))
+
+    # `optimize(m, IpoptAlg())` without x0 used to MethodError on the
+    # missing `Workspace(::VecModel, ::IpoptAlg; kwargs...)` method.
+    r = NonconvexIpopt.optimize(m, IpoptAlg())
+    @test abs(r.minimum - sqrt(8 / 27)) < 1e-6
+    @test norm(r.minimizer - [1 / 3, 8 / 27]) < 1e-6
+end
+
+@testitem "Intermediate callback Solutions own their g and λ buffers" begin
+    using NonconvexIpopt, NonconvexCore, LinearAlgebra, Test
+
+    f(x::AbstractVector) = sqrt(x[2])
+    g(x::AbstractVector, a, b) = (a * x[1] + b)^3 - x[2]
+
+    m = Model(f)
+    addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
+    add_ineq_constraint!(m, x -> g(x, 2, 0))
+    add_ineq_constraint!(m, x -> g(x, -1, 1))
+
+    captured = NonconvexCore.Solution[]
+    r = NonconvexIpopt.optimize(
+        m, IpoptAlg(), [1.234, 2.345]; callback=s -> push!(captured, s)
+    )
+    @test length(captured) >= 2
+    # Every captured Solution must own its constraint-value and multiplier
+    # arrays: they used to alias the closure buffers that Ipopt refills in
+    # place, so earlier Solutions were silently overwritten.
+    for i in 1:length(captured), j in (i + 1):length(captured)
+        @test captured[i].g !== captured[j].g
+        @test captured[i].λ !== captured[j].λ
+    end
+    # Earlier iterations keep their own values, not the last iteration's.
+    @test any(captured[i].g != captured[end].g for i in 1:(length(captured) - 1))
+    @test any(captured[i].λ != captured[end].λ for i in 1:(length(captured) - 1))
+    @test abs(r.minimum - sqrt(8 / 27)) < 1e-6
+end
