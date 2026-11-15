@@ -1,5 +1,24 @@
 # NEWS
 
+## 0.8.3
+
+- Fixed the default options, the no-`x0` Workspace path and the callback
+  Solution aliasing.
+
+## 0.8.2
+
+- Skipped the dense AD Jacobian on the JuMP-converted fast path.
+
+## 0.8.1
+
+- Stripped the nested-AD duals from the Float64 buffers.
+
+## 0.8.0
+
+- NonconvexCore 2 with strict solver capability declarations, sparse AD via
+  the `sparse` option, and symbolic differentiation via the `symbolic`
+  option.
+
 ## 0.7.1
 
 - `optimize` now accepts the generic `callback` keyword. The callback runs

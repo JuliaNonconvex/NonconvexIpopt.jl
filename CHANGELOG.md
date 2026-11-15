@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.3
+
+- Fixed the default options, the no-`x0` Workspace path and the callback
+  Solution aliasing; covered the JuMP-converted evaluator fast path and the
+  option branches; scheduled formatter workflow.
+
+## 0.8.2
+
+- Skipped the dense AD Jacobian on the JuMP-converted fast path.
+
+## 0.8.1
+
+- Stripped the nested-AD duals from the Float64 buffers; codecov OIDC/v5
+  uploads; logo and README polish.
+
 ## 0.8.0 (2026-11-10)
 
 - Support NonconvexCore 2: `NonconvexCore = "2"` is now the compat lower bound
