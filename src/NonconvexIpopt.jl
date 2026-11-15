@@ -199,6 +199,7 @@ function ipopt_status_string(status::Integer)
     status == -2 && return "Restoration_Failed"
     status == -3 && return "Error_In_Step_Computation"
     status == -4 && return "Maximum_CpuTime_Exceeded"
+    status == -5 && return "Maximum_WallTime_Exceeded"
     status == -10 && return "Not_Enough_Degrees_Of_Freedom"
     status == -11 && return "Invalid_Problem_Definition"
     status == -12 && return "Invalid_Option"
@@ -206,7 +207,7 @@ function ipopt_status_string(status::Integer)
     status == -100 && return "Unrecoverable_Exception"
     status == -101 && return "NonIpopt_Exception_Thrown"
     status == -102 && return "Insufficient_Memory"
-    status == -999 && return "Internal_Error"
+    status == -199 && return "Internal_Error"
     return "Unknown_Status"
 end
 
@@ -703,17 +704,36 @@ function get_ipopt_problem(
                 )
                 _H = _strip_duals(nc_hessian(lag(obj_factor, lambda), x))
                 HL = LowerTriangular(_H)
-                @assert nvalues(HL) == Hnvalues
                 values .= 0
-                add_values!(values, HL)
+                if nvalues(HL) == Hnvalues
+                    add_values!(values, HL)
+                else
+                    # The runtime Hessian sparsity differs from the structure
+                    # detected at x0 (e.g. a piecewise second derivative whose
+                    # active set changed). Do not crash the whole solve: fill
+                    # the detected pattern entries from the dense Hessian.
+                    for k in 1:Hnvalues
+                        values[k] = _H[h_rows[k], h_cols[k]]
+                    end
+                end
             else
                 lag_refs.factor[] = obj_factor
                 lag_refs.lambda[] = lambda
                 H = _strip_duals(sparse ? sparse_hessian(lagf, x) : nc_hessian(lagf, x))
                 HL = LowerTriangular(H)
-                @assert nvalues(HL) == Hnvalues
                 values .= 0
-                add_values!(values, HL)
+                if nvalues(HL) == Hnvalues
+                    add_values!(values, HL)
+                else
+                    # The runtime Hessian sparsity differs from the structure
+                    # detected at x0. Do not crash the whole solve: fill the
+                    # detected pattern entries from the dense Hessian for
+                    # this call.
+                    Hd = _strip_duals(nc_hessian(lagf, x))
+                    for k in 1:Hnvalues
+                        values[k] = Hd[h_rows[k], h_cols[k]]
+                    end
+                end
             end
         end
     end

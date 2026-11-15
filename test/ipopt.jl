@@ -218,6 +218,12 @@ end
         @test NonconvexIpopt.ipopt_status_string(-1) == "Maximum_Iterations_Exceeded"
         @test NonconvexIpopt.ipopt_status_string(-12) == "Invalid_Option"
         @test NonconvexIpopt.ipopt_status_string(12345) == "Unknown_Status"
+        # Ipopt's Internal_Error is -199 (the old -999 branch was dead).
+        @test NonconvexIpopt.ipopt_status_string(-199) == "Internal_Error"
+        @test NonconvexIpopt.ipopt_status_string(-999) == "Unknown_Status"
+        # Maximum_WallTime_Exceeded (-5, Ipopt ≥ 3.14).
+        @test NonconvexIpopt.ipopt_status_string(-5) == "Maximum_WallTime_Exceeded"
+        @test NonconvexIpopt.ipopt_status_string(-4) == "Maximum_CpuTime_Exceeded"
     end
 end
 
