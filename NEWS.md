@@ -1,5 +1,8 @@
 # NEWS
 
+## 0.8.5
+
+- `Internal_Error` is mapped from -199 (the -999 branch was dead) and `Maximum_WallTime_Exceeded` (-5) is mapped.\n- A runtime Hessian sparsity mismatch in `eval_h` falls back to the dense Hessian instead of crashing.
 ## 0.8.4
 
 - Added docstrings for `IpoptAlg` and `IpoptOptions` (REPL help and API reference).
