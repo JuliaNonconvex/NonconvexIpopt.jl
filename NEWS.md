@@ -1,5 +1,10 @@
 # NEWS
 
+## 0.8.4
+
+- Added docstrings for `IpoptAlg` and `IpoptOptions` (REPL help and API reference).
+
+
 ## 0.8.3
 
 - Fixed the default options, the no-`x0` Workspace path and the callback
