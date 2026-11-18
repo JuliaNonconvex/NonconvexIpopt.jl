@@ -12,14 +12,35 @@ using NonconvexCore: Solution, ConvergenceState, NoCallback
 using NonconvexCore: getnineqconstraints, getneqconstraints
 using NonconvexCore: VectorOfFunctions, getdim
 
-# Nested-AD artifacts: a constraint (or its provided Jacobian function) that
-# differentiates internally can return ForwardDiff.Dual values, which makes
-# the Jacobian matrices Dual-typed. Ipopt's buffers are Float64, so strip the
-# dual wrapper wherever Jacobian values flow into them; the value part of a
-# nested dual is the actual derivative.
-_strip_dual(x) = x
-_strip_dual(x::ForwardDiff.Dual) = ForwardDiff.value(x)
-_strip_duals(A) = _strip_dual.(A)
+# A Float64 callback receiving ForwardDiff.Dual values is a user-function
+# bug: the function differentiates internally and leaks the Dual wrapper.
+# Do not strip silently — that masks the bug; fail loudly instead.
+function _reject_dual_scalar(x, what)
+    if x isa ForwardDiff.Dual
+        throw(
+            ArgumentError(
+                "$what returned a ForwardDiff.Dual value at a Float64 point: " *
+                "a nested-AD artifact — the function differentiates internally " *
+                "and leaks the Dual wrapper. Return the value part instead.",
+            ),
+        )
+    end
+    return x
+end
+
+function _reject_duals(x, what)
+    if x isa AbstractArray{<:ForwardDiff.Dual}
+        throw(
+            ArgumentError(
+                "$what returned ForwardDiff.Dual values at a Float64 point: " *
+                "a nested-AD artifact — the function differentiates internally " *
+                "and leaks the Dual wrapper. Return the value part instead " *
+                "(e.g. `ForwardDiff.value.(...)`).",
+            ),
+        )
+    end
+    return x
+end
 import NonconvexCore:
     optimize!,
     sparse_jacobian,
@@ -509,8 +530,12 @@ function get_ipopt_problem(
         Joffset = ineqJ0_nvalues
         njacvals = ineqJ0_nvalues + eqJ0_nvalues
     end
-    ineqJ0 = ineqJ0 === nothing ? nothing : _strip_duals(ineqJ0)
-    eqJ0 = eqJ0 === nothing ? nothing : _strip_duals(eqJ0)
+    ineqJ0 = if ineqJ0 === nothing
+        nothing
+    else
+        _reject_duals(ineqJ0, "the initial inequality Jacobian")
+    end
+    eqJ0 = eqJ0 === nothing ? nothing : _reject_duals(eqJ0, "the initial equality Jacobian")
     # The Jacobian structure is fixed from the initial point.
     jac_rows = zeros(Int, njacvals)
     jac_cols = zeros(Int, njacvals)
@@ -585,7 +610,7 @@ function get_ipopt_problem(
         end
         # The Hessian structure is detected once at `x0` with all constraint
         # multipliers active so that it contains every possible entry.
-        protoH = _strip_duals(
+        protoH = _reject_duals(
             if symbolic
                 nc_hessian(L, x0)
             elseif sparse
@@ -593,6 +618,7 @@ function get_ipopt_problem(
             else
                 nc_hessian(L, x0)
             end,
+            "the Lagrangian Hessian prototype",
         )
         HL0 = LowerTriangular(protoH)
         Hnvalues = nvalues(HL0)
@@ -608,18 +634,25 @@ function get_ipopt_problem(
         if jump !== nothing
             NonconvexCore.jump_constraint_values!(jump, g, x)
         elseif symbolic
-            ineq_constr === nothing || (g[1:ineq_nconstr] .= _strip_duals(ineq_constr(x)))
-            eq_constr === nothing ||
-                (g[(ineq_nconstr + 1):end] .= _strip_duals(eq_constr(x)))
+            ineq_constr === nothing || (
+                g[1:ineq_nconstr] .= _reject_duals(
+                    ineq_constr(x), "an inequality constraint"
+                )
+            )
+            eq_constr === nothing || (
+                g[(ineq_nconstr + 1):end] .= _reject_duals(
+                    eq_constr(x), "an equality constraint"
+                )
+            )
         else
             d = unx(x)
             off = 0
             for (raw, rhs, dim) in ineq_cs
-                g[(off + 1):(off + dim)] .= _strip_duals(raw(d...) .- rhs)
+                g[(off + 1):(off + dim)] .= _reject_duals(raw(d...) .- rhs, "a constraint")
                 off += dim
             end
             for (raw, rhs, dim) in eq_cs
-                g[(off + 1):(off + dim)] .= _strip_duals(raw(d...) .- rhs)
+                g[(off + 1):(off + dim)] .= _reject_duals(raw(d...) .- rhs, "a constraint")
                 off += dim
             end
         end
@@ -634,7 +667,7 @@ function get_ipopt_problem(
                 # Constant objectives: Zygote returns a `nothing` gradient.
                 fill!(grad_f, 0.0)
             else
-                grad_f .= _strip_duals(grad)
+                grad_f .= _reject_duals(grad, "the objective gradient")
             end
         end
     end
@@ -659,18 +692,30 @@ function get_ipopt_problem(
             values .= jac0
         elseif symbolic
             values .= 0
-            ineq_constr === nothing || add_values!(values, _strip_duals(ineq_constr_g(x)))
-            eq_constr === nothing ||
-                add_values!(values, _strip_duals(eq_constr_g(x)); offset=Joffset)
+            ineq_constr === nothing || add_values!(
+                values,
+                _reject_duals(ineq_constr_g(x), "an inequality constraint gradient"),
+            )
+            eq_constr === nothing || add_values!(
+                values,
+                _reject_duals(eq_constr_g(x), "an equality constraint gradient");
+                offset=Joffset,
+            )
         else
             if ineq_constr !== nothing
-                J = _strip_duals(Matrix(_value_jacobian(ineq_constr, x)[2]))
+                J = _reject_duals(
+                    Matrix(_value_jacobian(ineq_constr, x)[2]),
+                    "an inequality constraint Jacobian",
+                )
                 for k in 1:Joffset
                     values[k] = J[jac_rows[k], jac_cols[k]]
                 end
             end
             if eq_constr !== nothing
-                J = _strip_duals(Matrix(_value_jacobian(eq_constr, x)[2]))
+                J = _reject_duals(
+                    Matrix(_value_jacobian(eq_constr, x)[2]),
+                    "an equality constraint Jacobian",
+                )
                 for k in (Joffset + 1):njacvals
                     values[k] = J[jac_rows[k] - ineq_nconstr, jac_cols[k]]
                 end
@@ -702,7 +747,9 @@ function get_ipopt_problem(
                 lag === nothing && throw(
                     ErrorException("Unreachable: symbolic path needs a Lagrangian.")
                 )
-                _H = _strip_duals(nc_hessian(lag(obj_factor, lambda), x))
+                _H = _reject_duals(
+                    nc_hessian(lag(obj_factor, lambda), x), "the Lagrangian Hessian"
+                )
                 HL = LowerTriangular(_H)
                 values .= 0
                 if nvalues(HL) == Hnvalues
@@ -719,7 +766,10 @@ function get_ipopt_problem(
             else
                 lag_refs.factor[] = obj_factor
                 lag_refs.lambda[] = lambda
-                H = _strip_duals(sparse ? sparse_hessian(lagf, x) : nc_hessian(lagf, x))
+                H = _reject_duals(
+                    sparse ? sparse_hessian(lagf, x) : nc_hessian(lagf, x),
+                    "the Lagrangian Hessian",
+                )
                 HL = LowerTriangular(H)
                 values .= 0
                 if nvalues(HL) == Hnvalues
@@ -729,7 +779,7 @@ function get_ipopt_problem(
                     # detected at x0. Do not crash the whole solve: fill the
                     # detected pattern entries from the dense Hessian for
                     # this call.
-                    Hd = _strip_duals(nc_hessian(lagf, x))
+                    Hd = _reject_duals(nc_hessian(lagf, x), "the Lagrangian Hessian")
                     for k in 1:Hnvalues
                         values[k] = Hd[h_rows[k], h_cols[k]]
                     end
@@ -739,7 +789,7 @@ function get_ipopt_problem(
     end
     # Nested-AD artifacts can make the objective Dual-valued; Ipopt's C
     # callback requires a Float64.
-    obj_eval = x -> _strip_dual(obj(x))
+    obj_eval = x -> _reject_dual_scalar(obj(x), "the objective")
     prob = Ipopt.CreateIpoptProblem(
         nvars,
         xlb,

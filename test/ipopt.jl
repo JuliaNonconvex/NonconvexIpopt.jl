@@ -255,10 +255,9 @@ end
 
     # A constraint that leaks nested-AD duals: the rrule below returns its
     # cotangent unprojected, so the function value (and, under Zygote, the
-    # Jacobian) stays Dual-typed even for Float64 input. This mirrors the
-    # surrogate constraints of the Bayesian package, whose predictions carry
-    # ForwardDiff duals. Ipopt's Float64 buffers must strip the dual wrapper
-    # instead of erroring.
+    # Jacobian) stays Dual-typed even for Float64 input. This is a
+    # user-function bug (a nested-AD artifact): Ipopt's Float64 callbacks
+    # must reject it loudly instead of silently stripping the Dual wrapper.
     leaky(t) = ForwardDiff.Dual{Nothing}(t * t, 2t)
     function ChainRulesCore.rrule(::typeof(leaky), t)
         y = leaky(t)
@@ -274,9 +273,9 @@ end
         m = Model(f)
         addvar!(m, [1e-4, 1e-4], [10.0, 10.0])
         add_ineq_constraint!(m, g)
-        r = NonconvexIpopt.optimize(m, IpoptAlg(), [1.234, 2.345]; options=IpoptOptions())
-        @test abs(r.minimum - sqrt(1e-4)) < 1e-3
-        @test r.minimizer[2] < 1e-3
+        @test_throws ArgumentError NonconvexIpopt.optimize(
+            m, IpoptAlg(), [1.234, 2.345]; options=IpoptOptions()
+        )
     finally
         set_ad_backend!(backend0)
     end
@@ -515,4 +514,27 @@ end
     @test any(captured[i].g != captured[end].g for i in 1:(length(captured) - 1))
     @test any(captured[i].λ != captured[end].λ for i in 1:(length(captured) - 1))
     @test abs(r.minimum - sqrt(8 / 27)) < 1e-6
+end
+
+@testitem "Dual-leak rejection helpers" begin
+    using NonconvexIpopt, ForwardDiff, Test
+
+    d = ForwardDiff.Dual{Nothing}(2.0, 1.0)
+    @test NonconvexIpopt._reject_dual_scalar(2.0, "x") == 2.0
+    @test NonconvexIpopt._reject_duals([1.0 2.0; 3.0 4.0], "x") == [1.0 2.0; 3.0 4.0]
+    @test_throws ArgumentError NonconvexIpopt._reject_dual_scalar(d, "the objective")
+    @test_throws ArgumentError NonconvexIpopt._reject_duals([d], "a constraint")
+    e = try
+        NonconvexIpopt._reject_dual_scalar(d, "the objective")
+        nothing
+    catch err
+        err
+    end
+    @test e isa ArgumentError
+    @test occursin("nested-AD artifact", e.msg)
+
+    # Note: an objective leaking Duals through its gradient fails loudly in
+    # the AD layer itself (Zygote errors on the Dual constructor) before the
+    # callback guard runs; the Dual-leaking-constraints testitem covers the
+    # callback-level ArgumentError end to end.
 end
