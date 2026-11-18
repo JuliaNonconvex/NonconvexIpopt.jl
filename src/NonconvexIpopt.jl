@@ -530,7 +530,11 @@ function get_ipopt_problem(
         Joffset = ineqJ0_nvalues
         njacvals = ineqJ0_nvalues + eqJ0_nvalues
     end
-    ineqJ0 = ineqJ0 === nothing ? nothing : _reject_duals(ineqJ0, "the initial inequality Jacobian")
+    ineqJ0 = if ineqJ0 === nothing
+        nothing
+    else
+        _reject_duals(ineqJ0, "the initial inequality Jacobian")
+    end
     eqJ0 = eqJ0 === nothing ? nothing : _reject_duals(eqJ0, "the initial equality Jacobian")
     # The Jacobian structure is fixed from the initial point.
     jac_rows = zeros(Int, njacvals)
@@ -630,10 +634,16 @@ function get_ipopt_problem(
         if jump !== nothing
             NonconvexCore.jump_constraint_values!(jump, g, x)
         elseif symbolic
-            ineq_constr === nothing ||
-                (g[1:ineq_nconstr] .= _reject_duals(ineq_constr(x), "an inequality constraint"))
-            eq_constr === nothing ||
-                (g[(ineq_nconstr + 1):end] .= _reject_duals(eq_constr(x), "an equality constraint"))
+            ineq_constr === nothing || (
+                g[1:ineq_nconstr] .= _reject_duals(
+                    ineq_constr(x), "an inequality constraint"
+                )
+            )
+            eq_constr === nothing || (
+                g[(ineq_nconstr + 1):end] .= _reject_duals(
+                    eq_constr(x), "an equality constraint"
+                )
+            )
         else
             d = unx(x)
             off = 0
@@ -682,18 +692,30 @@ function get_ipopt_problem(
             values .= jac0
         elseif symbolic
             values .= 0
-            ineq_constr === nothing || add_values!(values, _reject_duals(ineq_constr_g(x), "an inequality constraint gradient"))
-            eq_constr === nothing ||
-                add_values!(values, _reject_duals(eq_constr_g(x), "an equality constraint gradient"); offset=Joffset)
+            ineq_constr === nothing || add_values!(
+                values,
+                _reject_duals(ineq_constr_g(x), "an inequality constraint gradient"),
+            )
+            eq_constr === nothing || add_values!(
+                values,
+                _reject_duals(eq_constr_g(x), "an equality constraint gradient");
+                offset=Joffset,
+            )
         else
             if ineq_constr !== nothing
-                J = _reject_duals(Matrix(_value_jacobian(ineq_constr, x)[2]), "an inequality constraint Jacobian")
+                J = _reject_duals(
+                    Matrix(_value_jacobian(ineq_constr, x)[2]),
+                    "an inequality constraint Jacobian",
+                )
                 for k in 1:Joffset
                     values[k] = J[jac_rows[k], jac_cols[k]]
                 end
             end
             if eq_constr !== nothing
-                J = _reject_duals(Matrix(_value_jacobian(eq_constr, x)[2]), "an equality constraint Jacobian")
+                J = _reject_duals(
+                    Matrix(_value_jacobian(eq_constr, x)[2]),
+                    "an equality constraint Jacobian",
+                )
                 for k in (Joffset + 1):njacvals
                     values[k] = J[jac_rows[k] - ineq_nconstr, jac_cols[k]]
                 end
@@ -725,7 +747,9 @@ function get_ipopt_problem(
                 lag === nothing && throw(
                     ErrorException("Unreachable: symbolic path needs a Lagrangian.")
                 )
-                _H = _reject_duals(nc_hessian(lag(obj_factor, lambda), x), "the Lagrangian Hessian")
+                _H = _reject_duals(
+                    nc_hessian(lag(obj_factor, lambda), x), "the Lagrangian Hessian"
+                )
                 HL = LowerTriangular(_H)
                 values .= 0
                 if nvalues(HL) == Hnvalues
@@ -742,7 +766,10 @@ function get_ipopt_problem(
             else
                 lag_refs.factor[] = obj_factor
                 lag_refs.lambda[] = lambda
-                H = _reject_duals(sparse ? sparse_hessian(lagf, x) : nc_hessian(lagf, x), "the Lagrangian Hessian")
+                H = _reject_duals(
+                    sparse ? sparse_hessian(lagf, x) : nc_hessian(lagf, x),
+                    "the Lagrangian Hessian",
+                )
                 HL = LowerTriangular(H)
                 values .= 0
                 if nvalues(HL) == Hnvalues
