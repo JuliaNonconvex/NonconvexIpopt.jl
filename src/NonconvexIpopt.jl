@@ -614,6 +614,7 @@ function get_ipopt_problem(
             else
                 nc_hessian(L, x0)
             end,
+            "the Lagrangian Hessian prototype",
         )
         HL0 = LowerTriangular(protoH)
         Hnvalues = nvalues(HL0)
