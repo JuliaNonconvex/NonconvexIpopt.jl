@@ -515,3 +515,26 @@ end
     @test any(captured[i].λ != captured[end].λ for i in 1:(length(captured) - 1))
     @test abs(r.minimum - sqrt(8 / 27)) < 1e-6
 end
+
+@testitem "Dual-leak rejection helpers" begin
+    using NonconvexIpopt, ForwardDiff, Test
+
+    d = ForwardDiff.Dual{Nothing}(2.0, 1.0)
+    @test NonconvexIpopt._reject_dual_scalar(2.0, "x") == 2.0
+    @test NonconvexIpopt._reject_duals([1.0 2.0; 3.0 4.0], "x") == [1.0 2.0; 3.0 4.0]
+    @test_throws ArgumentError NonconvexIpopt._reject_dual_scalar(d, "the objective")
+    @test_throws ArgumentError NonconvexIpopt._reject_duals([d], "a constraint")
+    e = try
+        NonconvexIpopt._reject_dual_scalar(d, "the objective")
+        nothing
+    catch err
+        err
+    end
+    @test e isa ArgumentError
+    @test occursin("nested-AD artifact", e.msg)
+
+    # Note: an objective leaking Duals through its gradient fails loudly in
+    # the AD layer itself (Zygote errors on the Dual constructor) before the
+    # callback guard runs; the Dual-leaking-constraints testitem covers the
+    # callback-level ArgumentError end to end.
+end
