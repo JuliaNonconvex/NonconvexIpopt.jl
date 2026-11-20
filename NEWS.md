@@ -1,5 +1,13 @@
 # NEWS
 
+## 0.8.6
+
+- Dual leaks from user functions that differentiate internally now hard-error
+  with a descriptive `ArgumentError` (naming the offending quantity) instead
+  of being silently stripped: a `ForwardDiff.Dual` reaching a Float64
+  callback is a nested-AD artifact in the user's function, not something the
+  wrapper should paper over.
+
 ## 0.8.5
 
 - `Internal_Error` is mapped from -199 (the -999 branch was dead) and `Maximum_WallTime_Exceeded` (-5) is mapped.\n- A runtime Hessian sparsity mismatch in `eval_h` falls back to the dense Hessian instead of crashing.
