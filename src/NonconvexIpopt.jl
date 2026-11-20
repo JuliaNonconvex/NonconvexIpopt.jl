@@ -139,15 +139,17 @@ end
     options::IpoptOptions
     counter::Base.RefValue{Int}
     callback::Function
+    lagrangian_hessian::Union{Nothing,Function}
 end
 function IpoptWorkspace(
     model::VecModel,
     x0::AbstractVector=getinit(model);
     options=IpoptOptions(),
     callback::Function=NoCallback(),
+    lagrangian_hessian::Union{Nothing,Function}=nothing,
     kwargs...,
 )
-    return _ipopt_workspace(model, x0, options, callback)
+    return _ipopt_workspace(model, x0, options, callback, lagrangian_hessian)
 end
 # A positional constructor on the raw options NamedTuple: JET (on Julia 1.13)
 # cannot resolve `Core.kwcall` on the keyword-only `IpoptOptions` constructor
@@ -156,9 +158,16 @@ end
 function IpoptWorkspace(model::VecModel, x0::AbstractVector, nt::NamedTuple)
     options = haskey(nt, :options) ? nt[:options] : _default_options()
     callback = get(nt, :callback, NoCallback())
-    return _ipopt_workspace(model, x0, options, callback)
+    lagrangian_hessian = get(nt, :lagrangian_hessian, nothing)
+    return _ipopt_workspace(model, x0, options, callback, lagrangian_hessian)
 end
-function _ipopt_workspace(model::VecModel, x0::AbstractVector, options, callback::Function)
+function _ipopt_workspace(
+    model::VecModel,
+    x0::AbstractVector,
+    options,
+    callback::Function,
+    lagrangian_hessian::Union{Nothing,Function}=nothing,
+)
     problem, counter = get_ipopt_problem(
         model,
         copy(x0),
@@ -166,8 +175,11 @@ function _ipopt_workspace(model::VecModel, x0::AbstractVector, options, callback
         options.nt.jac_c_constant == "yes" && options.nt.jac_d_constant == "yes",
         options.nt.sparse,
         options.nt.symbolic,
+        lagrangian_hessian,
     )
-    return IpoptWorkspace(model, problem, copy(x0), options, counter, callback)
+    return IpoptWorkspace(
+        model, problem, copy(x0), options, counter, callback, lagrangian_hessian
+    )
 end
 @params struct IpoptResult <: AbstractResult
     minimizer
@@ -344,7 +356,8 @@ end
 function _ipopt_workspace_nt(model::VecModel, x0::AbstractVector, nt::NamedTuple)
     options = haskey(nt, :options) ? nt[:options] : _default_options()
     callback = get(nt, :callback, NoCallback())
-    return _ipopt_workspace(model, x0, options, callback)
+    lagrangian_hessian = get(nt, :lagrangian_hessian, nothing)
+    return _ipopt_workspace(model, x0, options, callback, lagrangian_hessian)
 end
 
 function get_ipopt_problem(
@@ -354,6 +367,7 @@ function get_ipopt_problem(
     linear::Bool,
     sparse::Bool,
     symbolic::Bool,
+    lagrangian_hessian::Union{Nothing,Function}=nothing,
 )
     eq = if length(model.eq_constraints.fs) == 0
         nothing
@@ -384,6 +398,7 @@ function get_ipopt_problem(
         linear,
         sparse,
         symbolic,
+        lagrangian_hessian,
     ),
     obj.counter
 end
@@ -428,6 +443,7 @@ function get_ipopt_problem(
     linear::Bool,
     sparse::Bool,
     symbolic::Bool,
+    lagrangian_hessian::Union{Nothing,Function}=nothing,
 )
     nvars = length(x0)
     # Batched model pieces for the non-symbolic path: the raw user-facing
@@ -609,17 +625,27 @@ function get_ipopt_problem(
             L = lagf
         end
         # The Hessian structure is detected once at `x0` with all constraint
-        # multipliers active so that it contains every possible entry.
-        protoH = _reject_duals(
-            if symbolic
-                nc_hessian(L, x0)
-            elseif sparse
-                sparse_hessian(L, x0)
-            else
-                nc_hessian(L, x0)
-            end,
-            "the Lagrangian Hessian prototype",
-        )
+        # multipliers active so that it contains every possible entry. A
+        # caller-provided Lagrangian Hessian (e.g. a JuMP-evaluator-based
+        # composition) replaces the AD path.
+        protoH = if lagrangian_hessian !== nothing
+            # A caller-composed Lagrangian Hessian (e.g. from a JuMP
+            # evaluator) can change its sparsity with the active set during
+            # the solve; use the dense lower-triangular pattern so no entry
+            # is ever dropped from the fixed Ipopt structure.
+            ones(nvars, nvars)
+        else
+            _reject_duals(
+                if symbolic
+                    nc_hessian(L, x0)
+                elseif sparse
+                    sparse_hessian(L, x0)
+                else
+                    nc_hessian(L, x0)
+                end,
+                "the Lagrangian Hessian prototype",
+            )
+        end
         HL0 = LowerTriangular(protoH)
         Hnvalues = nvalues(HL0)
         h_rows = zeros(Int, Hnvalues)
@@ -743,6 +769,14 @@ function get_ipopt_problem(
                 end
             elseif jump !== nothing
                 NonconvexCore.jump_hessian_lagrangian!(jump, values, x, obj_factor, lambda)
+            elseif lagrangian_hessian !== nothing
+                H = _reject_duals(
+                    lagrangian_hessian(x, obj_factor, lambda), "the Lagrangian Hessian"
+                )
+                values .= 0
+                for k in 1:Hnvalues
+                    values[k] = H[h_rows[k], h_cols[k]]
+                end
             elseif symbolic
                 lag === nothing && throw(
                     ErrorException("Unreachable: symbolic path needs a Lagrangian.")
