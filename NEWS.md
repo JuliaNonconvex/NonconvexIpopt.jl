@@ -1,5 +1,9 @@
 # NEWS
 
+## 0.9.0
+
+- New `lagrangian_hessian` option (and `IpoptWorkspace`/`optimize` keyword): a caller-provided `(x, obj_factor, lambda) -> H` callback replaces the AD path in `eval_h`, so solver frameworks can supply exact second derivatives assembled from MathOptInterface evaluators without nested AD. When provided, the Hessian sparsity pattern is the dense lower triangle (active-set safe).
+- Option fields are read with their documented defaults, so options built through the raw `IpoptOptions(nt::NamedTuple)` constructor (a partial field set) are valid.
 ## 0.8.6
 
 - Dual leaks from user functions that differentiate internally now hard-error
