@@ -87,6 +87,15 @@ end
 # keyword constructors for anything that runs afterwards.
 @testitem "JET" begin
     using JET, NonconvexIpopt
+    if VERSION >= v"1.13.0"
+        # JET's virtual top-level replay re-evaluates the package source
+        # IN THE REAL MODULE on Julia 1.13, which redefines the
+        # `IpoptWorkspace` struct in-place and invalidates every method
+        # defined after it (e.g. its keyword constructors). Any testitem
+        # running later in the suite would hit the invalidated methods.
+        # The dedicated "JET: Report" CI job still runs the analysis.
+        return
+    end
     # The `symbolic` option exercises NonconvexCore's Symbolics extension, so
     # load it for JET to see the `symbolify` methods.
     using Symbolics
