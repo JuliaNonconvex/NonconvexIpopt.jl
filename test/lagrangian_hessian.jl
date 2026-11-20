@@ -15,7 +15,7 @@
         model,
         IpoptAlg(),
         [0.0, 0.0];
-        options=IpoptOptions(hessian_approximation="exact"),
+        options=IpoptOptions((; hessian_approximation="exact")),
         lagrangian_hessian=lh,
     )
     @test maximum(abs.(r.minimizer .- [1.0, 2.0])) < 1e-6
