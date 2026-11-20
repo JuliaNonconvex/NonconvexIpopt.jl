@@ -168,13 +168,14 @@ function _ipopt_workspace(
     callback::Function,
     lagrangian_hessian::Union{Nothing,Function}=nothing,
 )
+    nt = options.nt
     problem, counter = get_ipopt_problem(
         model,
         copy(x0),
-        options.nt.hessian_approximation == "limited-memory",
-        options.nt.jac_c_constant == "yes" && options.nt.jac_d_constant == "yes",
-        options.nt.sparse,
-        options.nt.symbolic,
+        get(nt, :hessian_approximation, "limited-memory") == "limited-memory",
+        get(nt, :jac_c_constant, "no") == "yes" && get(nt, :jac_d_constant, "no") == "yes",
+        get(nt, :sparse, false),
+        get(nt, :symbolic, false),
         lagrangian_hessian,
     )
     return IpoptWorkspace(
