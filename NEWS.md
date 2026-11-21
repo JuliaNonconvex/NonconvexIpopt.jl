@@ -1,5 +1,8 @@
 # NEWS
 
+## 0.9.1
+
+- Docs: package-name section titles and left-aligned logos (no code changes).
 ## 0.9.0
 
 - New `lagrangian_hessian` option (and `IpoptWorkspace`/`optimize` keyword): a caller-provided `(x, obj_factor, lambda) -> H` callback replaces the AD path in `eval_h`, so solver frameworks can supply exact second derivatives assembled from MathOptInterface evaluators without nested AD. When provided, the Hessian sparsity pattern is the dense lower triangle (active-set safe).
