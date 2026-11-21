@@ -1,4 +1,4 @@
-# Interior point method using `Ipopt.jl`
+# NonconvexIpopt
 
 ```@raw html
 <p align="center">
