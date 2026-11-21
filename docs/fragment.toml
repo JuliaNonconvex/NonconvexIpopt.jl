@@ -1,4 +1,4 @@
-name = "Ipopt"
+name = "NonconvexIpopt"
 modules = ["NonconvexIpopt"]
 doctest_setup = "using NonconvexIpopt"
 

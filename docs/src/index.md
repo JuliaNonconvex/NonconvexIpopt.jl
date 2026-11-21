@@ -1,4 +1,4 @@
-# Interior point method using `Ipopt.jl`
+# NonconvexIpopt
 
 ![JuliaNonconvex logo](https://raw.githubusercontent.com/JuliaNonconvex/NonconvexIpopt.jl/master/docs/src/assets/logo.png)
 
