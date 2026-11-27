@@ -388,10 +388,14 @@ function get_ipopt_problem(
         objective
     end
     obj = CountingFunction(_obj)
+    # A JuMP-converted model provides values, Jacobian and Lagrangian
+    # Hessian directly from its single Nonlinear evaluator.
+    jump = symbolic ? nothing : NonconvexCore.jump_evaluator(model)
     return get_ipopt_problem(
         obj,
         ineq,
         eq,
+        jump,
         x0,
         getmin(model),
         getmax(model),
@@ -403,40 +407,11 @@ function get_ipopt_problem(
     ),
     obj.counter
 end
-# The single Nonlinear evaluator of a JuMP-converted model, if the objective
-# and every constraint belong to it; otherwise `nothing`.
-function _jump_evaluator(obj, ineq_constr, eq_constr)
-    objraw = obj isa CountingFunction ? obj.f : obj
-    objraw = objraw isa NonconvexCore.Objective ? NonconvexCore.getfunction(objraw) : objraw
-    objraw = if objraw isa NonconvexCore.FlattenedFunction
-        NonconvexCore.getrawfunction(objraw)
-    else
-        objraw
-    end
-    objraw isa NonconvexCore.JuMPModelObjective || return nothing
-    m = objraw.m
-    cs = (
-        (ineq_constr === nothing ? () : ineq_constr.fs)...,
-        (eq_constr === nothing ? () : eq_constr.fs)...,
-    )
-    for c in cs
-        raw = if c.f isa NonconvexCore.FlattenedFunction
-            NonconvexCore.getrawfunction(c.f)
-        else
-            c.f
-        end
-        raw = raw isa FunctionWrapper ? NonconvexCore.getfunction(raw) : raw
-        (raw isa NonconvexCore.JuMPModelIneq || raw isa NonconvexCore.JuMPModelEq) ||
-            return nothing
-        raw.m === m || return nothing
-    end
-    return m
-end
-
 function get_ipopt_problem(
     obj::CountingFunction,
     ineq_constr::Union{Nothing,VectorOfFunctions},
     eq_constr::Union{Nothing,VectorOfFunctions},
+    jump::Union{Nothing,NonconvexCore.JuMPEvaluator},
     x0::AbstractVector,
     xlb::AbstractVector,
     xub::AbstractVector,
@@ -480,9 +455,6 @@ function get_ipopt_problem(
     ineq_nconstr = sum(c -> c[3], ineq_cs; init=0)
     eq_nconstr = sum(c -> c[3], eq_cs; init=0)
     nconstr = ineq_nconstr + eq_nconstr
-    # A JuMP-converted model provides values, Jacobian and Lagrangian
-    # Hessian directly from its single Nonlinear evaluator.
-    jump = symbolic ? nothing : _jump_evaluator(obj, ineq_constr, eq_constr)
     if symbolic
         if ineq_constr !== nothing
             ineq_constr = symbolify(
